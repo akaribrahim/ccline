@@ -1,0 +1,5 @@
+*.bak
+*.ccline-bak
+.DS_Store
+/tmp/
+*.log

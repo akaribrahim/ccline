@@ -1,0 +1,18 @@
+# ccline config — copy to ~/.claude/ccline.conf and edit.
+# Every key can also be set as an environment variable (env wins over file).
+
+# Visual style: plain | bars | powerline
+CCLINE_STYLE=plain
+
+# Color depth: auto | truecolor | 256 | 16
+# auto detects the terminal (Terminal.app -> 256, iTerm/WT/VSCode -> truecolor).
+CCLINE_COLOR=auto
+
+# Glyphs: auto | 1 (ASCII only) | 0 (Unicode)
+# auto uses ASCII on legacy Windows console, Unicode elsewhere.
+CCLINE_ASCII=auto
+
+# Percentage thresholds that drive the green -> yellow -> orange -> red colour.
+CCLINE_WARN=50
+CCLINE_HIGH=75
+CCLINE_CRIT=90
