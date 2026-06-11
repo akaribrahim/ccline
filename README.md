@@ -63,7 +63,7 @@ bash install.sh            # or: bash install.sh powerline
 # Windows:  ./install.ps1 -Style powerline
 ```
 
-The installer copies the status line into `~/.claude/`, writes `~/.claude/ccline.conf`, and points `statusLine.command` in `~/.claude/settings.json` at it — **after backing settings.json up** to `settings.json.ccline-bak`. It never deletes your previous status line script. Open a new Claude Code session to see it.
+The installer copies the status line into `~/.claude/` and points `statusLine.command` in `~/.claude/settings.json` at it — **after backing settings.json up** to `settings.json.ccline-bak`. If you pass a style (`bash install.sh bars`), it also writes that choice to `~/.claude/ccline.conf`; with no argument it defaults to `plain` and writes no conf file. It never deletes your previous status line script. Open a new Claude Code session to see it.
 
 ## Terminal support
 
@@ -79,7 +79,7 @@ Detection is automatic via `$COLORTERM`, `$TERM_PROGRAM`, `$WT_SESSION`, `$TERM`
 
 ## Configuration
 
-Edit `~/.claude/ccline.conf` (or set the matching environment variable — **env wins over the file**):
+Create or edit `~/.claude/ccline.conf` (or set the matching environment variable — **env wins over the file**):
 
 | Key | Values | Default | Meaning |
 |---|---|---|---|
