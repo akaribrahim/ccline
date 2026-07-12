@@ -226,28 +226,33 @@ expired() {                                # -> _EX (1 = window already reset)
 expired "$five_reset";  five_stale=$_EX
 expired "$seven_reset"; seven_stale=$_EX
 
-# The same dash covers the *other* way a limit can be unknown: rate_limits only
-# show up after the first API response, so a fresh session has no figures yet.
-# Holding the slot open (5h —) keeps the line from reshuffling the moment you
-# send your first message.
+# The same dash covers the *other* way a limit can be unknown: rate_limits are
+# absent from the payload for the first render or two of a session — including a
+# --resume, where they show up a beat later without you typing anything. Holding
+# the slot open (5h —) stops the line reshuffling underneath you.
 #
-# But rate_limits never arrive at all for API-key users, and a permanent dash
-# would be a lie. Once a response *has* landed (we have cost or token counts)
-# and the limits are still absent, this account simply doesn't have them: hide.
+# But rate_limits never arrive at all on API-key accounts, and a dash that never
+# resolves is its own lie. The question "does this account have limits?" can't be
+# answered from one payload — a resumed session already has cost and token counts
+# while the limits are still missing, so those are not the signal. What does
+# answer it: have we *ever* seen limits here? Learn that once, remember it.
 intval "$cost_cents"; cost_cents=$_IV
 intval "$lines_add";  lines_add=$_IV
 intval "$lines_del";  lines_del=$_IV
-responded=0
-[ "$cost_cents" -gt 0 ] && responded=1
-if [ -n "$ctx_tok" ] && [ "$ctx_tok" -gt 0 ] 2>/dev/null; then responded=1; fi
 
-five_show=1; seven_show=1
-if [ -z "$five_hr" ]; then
-  if [ "$responded" = 0 ]; then five_hr=0; five_stale=1; else five_show=0; fi
+SEEN="$CLAUDE_DIR/.ccline-limits-seen"
+if [ -n "$five_hr" ] || [ -n "$seven_day" ]; then
+  limits_known=1
+  [ -f "$SEEN" ] || : > "$SEEN" 2>/dev/null   # first sighting: remember for next time
+elif [ -f "$SEEN" ]; then
+  limits_known=1                              # they exist, they're just not here yet
+else
+  limits_known=0                              # never seen any: API key, most likely
 fi
-if [ -z "$seven_day" ]; then
-  if [ "$responded" = 0 ]; then seven_day=0; seven_stale=1; else seven_show=0; fi
-fi
+
+five_show=$limits_known; seven_show=$limits_known
+[ -z "$five_hr" ]   && { five_hr=0;   five_stale=1; }
+[ -z "$seven_day" ] && { seven_day=0; seven_stale=1; }
 
 # Pace: "at this burn rate, where does the window end up?" The window length is
 # fixed (5h / 7d) and resets_at is its end, so elapsed — and therefore the

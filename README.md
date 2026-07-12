@@ -159,7 +159,7 @@ So the installer also sets **`refreshInterval: 10`** in `settings.json`, which r
 
 That keeps the reset countdowns ticking and lets the git segment notice a branch you switched in another terminal — or one a background subagent switched under you. Set it to any value ≥ 1 (or drop the key to go back to events-only).
 
-**Usage percentages are the exception.** `rate_limits` only arrives with an API response, so no timer can refresh it — the number is a snapshot from your last message, and it does not tick upward on its own.
+**Usage percentages are the exception.** ccline can't compute them — it can only print what Claude Code puts in the payload, and `rate_limits` lands there when Claude Code has fresh figures (with an API response, and a beat after a `--resume` starts). The number is a snapshot; it does not tick upward on its own between messages.
 
 That leaves two moments where a percentage would be a lie, and both render as a dash — *the slot is here, the value isn't*:
 
@@ -170,14 +170,14 @@ That leaves two moments where a percentage would be a lie, and both render as a 
 - **A fresh session**, before your first message. The figures simply haven't arrived. Holding the slot open keeps the line from reshuffling the moment they do.
 - **A window that has already reset** while you sat idle. The old percentage is now *known* to be wrong, so we stop showing it; the real figure lands with your next message.
 
-A dash that never resolves would be its own lie, though: `rate_limits` never arrives at all on API-key accounts. So once a response *has* landed (we have cost or token counts) and the limits are still missing, ccline concludes this account doesn't have them and drops both segments for good.
+A dash that never resolves would be its own lie, though: `rate_limits` never arrives at all on API-key accounts. But a single payload can't tell the two apart — a resumed session already carries cost and token counts while its limits are still missing. So ccline answers the question the only way it can: *have we ever seen limits here?* The first sighting is remembered (`~/.claude/.ccline-limits-seen`), and from then on an absent limit means "not here yet" rather than "not for you".
 
 | Segment | Refreshed by |
 |---|---|
 | Directory, git branch/dirty, worktree | every run — so every 10 s with `refreshInterval` |
 | Reset countdowns (`↺2h13m`), pace (`⇈173%`) | every run — computed locally from `resets_at` |
 | Model, effort, context, cost, PR | every event — they only change when the conversation does |
-| **5h / 7d percentages** | **API responses only** — i.e. when you send a message |
+| **5h / 7d percentages** | **Claude Code, not us** — they refresh when it has new figures, which is not on our timer |
 
 ## Requirements
 
