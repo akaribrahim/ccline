@@ -25,8 +25,16 @@ say "  ────────────────────────�
 mkdir -p "$CLAUDE_DIR"
 
 # 1) place the status line script (local clone first, else download) ---------
+# Only treat this as "running from a clone" when $0 really is the script on
+# disk. Piped in (curl | bash) $0 is "bash", so dirname yields the *current*
+# directory — and if that happened to be a checkout of this repo, we'd silently
+# install the working copy instead of the release the user asked for.
 SRC=""
-SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)"
+SELF_DIR=""
+case "$0" in
+  */install.sh|install.sh)
+    [ -f "$0" ] && SELF_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd || true)" ;;
+esac
 if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/src/statusline.sh" ]; then
   SRC="$SELF_DIR/src/statusline.sh"
   cp "$SRC" "$DEST"

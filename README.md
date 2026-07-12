@@ -102,6 +102,37 @@ bash install.sh            # or: bash install.sh powerline
 
 The installer copies the status line into `~/.claude/` and points `statusLine.command` in `~/.claude/settings.json` at it — **after backing settings.json up** to `settings.json.ccline-bak`. It also sets `statusLine.refreshInterval` to `10` (see [Freshness](#freshness)); export `CCLINE_REFRESH` before running the installer to choose another value. If you pass a style (`bash install.sh bars`), it writes that choice to `~/.claude/ccline.conf`; with no argument it defaults to `plain` and writes no conf file. It never deletes your previous status line script. Open a new Claude Code session to see it.
 
+### For coding agents
+
+If someone hands you this repo and asks you to set it up for them, this is the whole job. It is idempotent — re-running it is safe.
+
+```sh
+# 1. jq is required (macOS/Linux). Stop and ask the user to install it if missing.
+command -v jq >/dev/null || echo "needs jq:  brew install jq   |   sudo apt-get install -y jq"
+
+# 2. Install. Backs settings.json up to settings.json.ccline-bak (and never
+#    overwrites an existing backup), never deletes their old status line script.
+curl -fsSL https://raw.githubusercontent.com/akaribrahim/ccline/main/install.sh | bash
+
+# 3. Verify the config landed — expect type/command/refreshInterval.
+jq '.statusLine' ~/.claude/settings.json
+
+# 4. Verify it actually renders, by feeding it a sample of Claude Code's payload.
+printf '{"cwd":"%s","model":{"display_name":"Opus 4.8"},"context_window":{"used_percentage":12,"total_input_tokens":24000,"context_window_size":200000}}' "$PWD" \
+  | bash ~/.claude/ccline.sh; echo
+```
+
+Windows is the same shape: `irm https://raw.githubusercontent.com/akaribrahim/ccline/main/install.ps1 | iex`, then verify with `~/.claude/ccline.ps1`.
+
+Then **tell the user the two things you cannot do for them**:
+
+1. **Restart Claude Code.** `statusLine` is read at session start, so the line will not appear in the session you just ran this from. This is the step agents most often forget to mention, and it makes a correct install look broken.
+2. Optionally pick a style — `CCLINE_STYLE=plain|bars|powerline` in `~/.claude/ccline.conf`.
+
+Two things not to do: don't hand-edit `statusLine` in `settings.json` (the installer writes it *and* keeps the pre-ccline backup — an ad-hoc edit loses that), and don't report success on step 2 alone. Step 4 is what proves it works; a status line that errors prints nothing and fails silently.
+
+To undo: `bash uninstall.sh`, or restore `~/.claude/settings.json.ccline-bak`.
+
 ## Terminal support
 
 | Terminal | Color | Glyphs | Result |
