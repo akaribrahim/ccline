@@ -69,9 +69,16 @@ fi
 # countdowns; ccline renders in ~20ms so the cost is negligible.
 CMD="bash $DEST"
 REFRESH="${CCLINE_REFRESH:-10}"
+# Back up only the *pre-ccline* settings: re-running the installer must not
+# clobber that backup with a copy of our own config, or uninstall would have
+# nothing real to restore.
 if [ -f "$SETTINGS" ]; then
-  cp "$SETTINGS" "$SETTINGS.ccline-bak"
-  ok "backed up settings.json -> settings.json.ccline-bak"
+  if [ -f "$SETTINGS.ccline-bak" ]; then
+    ok "kept existing backup (settings.json.ccline-bak)"
+  else
+    cp "$SETTINGS" "$SETTINGS.ccline-bak"
+    ok "backed up settings.json -> settings.json.ccline-bak"
+  fi
 fi
 
 if command -v jq >/dev/null 2>&1; then

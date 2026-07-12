@@ -49,9 +49,16 @@ if ($Style) {
 $psHost = if ($PSVersionTable.PSVersion.Major -ge 6) { 'pwsh' } else { 'powershell' }
 $cmd = "$psHost -NoProfile -ExecutionPolicy Bypass -File `"$dest`""
 
+# Back up only the *pre-ccline* settings: re-running the installer must not
+# clobber that backup with a copy of our own config, or uninstall would have
+# nothing real to restore.
 if (Test-Path $settings) {
-  Copy-Item $settings "$settings.ccline-bak" -Force
-  Ok 'backed up settings.json -> settings.json.ccline-bak'
+  if (Test-Path "$settings.ccline-bak") {
+    Ok 'kept existing backup (settings.json.ccline-bak)'
+  } else {
+    Copy-Item $settings "$settings.ccline-bak"
+    Ok 'backed up settings.json -> settings.json.ccline-bak'
+  }
   try { $obj = Get-Content $settings -Raw | ConvertFrom-Json } catch { $obj = [pscustomobject]@{} }
 } else {
   $obj = [pscustomobject]@{}
