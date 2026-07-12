@@ -205,6 +205,29 @@ expired() {                                # -> _EX (1 = window already reset)
 expired "$five_reset";  five_stale=$_EX
 expired "$seven_reset"; seven_stale=$_EX
 
+# The same dash covers the *other* way a limit can be unknown: rate_limits only
+# show up after the first API response, so a fresh session has no figures yet.
+# Holding the slot open (5h —) keeps the line from reshuffling the moment you
+# send your first message.
+#
+# But rate_limits never arrive at all for API-key users, and a permanent dash
+# would be a lie. Once a response *has* landed (we have cost or token counts)
+# and the limits are still absent, this account simply doesn't have them: hide.
+intval "$cost_cents"; cost_cents=$_IV
+intval "$lines_add";  lines_add=$_IV
+intval "$lines_del";  lines_del=$_IV
+responded=0
+[ "$cost_cents" -gt 0 ] && responded=1
+if [ -n "$ctx_tok" ] && [ "$ctx_tok" -gt 0 ] 2>/dev/null; then responded=1; fi
+
+five_show=1; seven_show=1
+if [ -z "$five_hr" ]; then
+  if [ "$responded" = 0 ]; then five_hr=0; five_stale=1; else five_show=0; fi
+fi
+if [ -z "$seven_day" ]; then
+  if [ "$responded" = 0 ]; then seven_day=0; seven_stale=1; else seven_show=0; fi
+fi
+
 # Pace: "at this burn rate, where does the window end up?" The window length is
 # fixed (5h / 7d) and resets_at is its end, so elapsed — and therefore the
 # projection — is pure local arithmetic; no history file, no extra process.
@@ -360,19 +383,18 @@ seg_limit_bar() {                          # label pct reset stale window -> _SE
 seg_cost() {                               # -> _SEG ('' when nothing spent yet)
   _SEG=''
   [ "$COST_ON" = 1 ] || return
-  intval "$cost_cents"; _c=$_IV
-  intval "$lines_add"; _la=$_IV
-  intval "$lines_del"; _ld=$_IV
-  [ "$_c" -eq 0 ] && [ "$_la" -eq 0 ] && [ "$_ld" -eq 0 ] && return
-  _f=$(( _c % 100 )); [ "$_f" -lt 10 ] && _f="0$_f"
-  _SEG="$E_DIM\$$(( _c / 100 )).$_f$R"
-  [ "$_la" -gt 0 ] || [ "$_ld" -gt 0 ] && \
-    _SEG="$_SEG $E_GREEN+$_la$R$E_DIM/$R$E_RED-$_ld$R"
+  [ "$cost_cents" -eq 0 ] && [ "$lines_add" -eq 0 ] && [ "$lines_del" -eq 0 ] && return
+  _f=$(( cost_cents % 100 )); [ "$_f" -lt 10 ] && _f="0$_f"
+  _SEG="$E_DIM\$$(( cost_cents / 100 )).$_f$R"
+  if [ "$lines_add" -gt 0 ] || [ "$lines_del" -gt 0 ]; then
+    # labelled: these are the lines *this session* edited, not the working tree
+    _SEG="$_SEG ${E_DIM}edits $E_GREEN+$lines_add$R$E_DIM/$R$E_RED-$lines_del$R"
+  fi
 }
 seg_ctx() {                                # -> _SEG
   pct_e "$ctx"
   _SEG="${E_DIM}ctx $_E$ctx%$R"
-  if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
+  if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_tok" -gt 0 ] 2>/dev/null && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
     fmt_k "$ctx_tok"; _t=$_K; fmt_k "$ctx_max"
     _SEG="$_SEG $E_DIM$_t/$_K$R"
   fi
@@ -380,7 +402,7 @@ seg_ctx() {                                # -> _SEG
 seg_ctx_bar() {                            # -> _SEG
   pct_e "$ctx"; bar "$ctx" 6
   _SEG="${E_DIM}ctx $G_BL$_E$_BAR$E_DIM$G_BR $_E$ctx%$R"
-  if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
+  if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_tok" -gt 0 ] 2>/dev/null && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
     fmt_k "$ctx_tok"; _t=$_K; fmt_k "$ctx_max"
     _SEG="$_SEG $E_DIM$_t/$_K$R"
   fi
@@ -389,8 +411,8 @@ seg_ctx_bar() {                            # -> _SEG
 render_plain() {
   seg_dir; add "$_SEG"
   seg_model; [ -n "$_SEG" ] && add "$_SEG"
-  [ -n "$five_hr" ]   && { seg_limit 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"; add "$_SEG"; }
-  [ -n "$seven_day" ] && { seg_limit 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"; add "$_SEG"; }
+  [ "$five_show" = 1 ] && { seg_limit 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"; add "$_SEG"; }
+  [ "$seven_show" = 1 ] && { seg_limit 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"; add "$_SEG"; }
   seg_ctx; add "$_SEG"
   seg_cost; [ -n "$_SEG" ] && add "$_SEG"
   printf '%s' "$L"
@@ -398,8 +420,8 @@ render_plain() {
 render_bars() {
   seg_dir; add "$_SEG"
   seg_model; [ -n "$_SEG" ] && add "$_SEG"
-  [ -n "$five_hr" ]   && { seg_limit_bar 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"; add "$_SEG"; }
-  [ -n "$seven_day" ] && { seg_limit_bar 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"; add "$_SEG"; }
+  [ "$five_show" = 1 ] && { seg_limit_bar 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"; add "$_SEG"; }
+  [ "$seven_show" = 1 ] && { seg_limit_bar 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"; add "$_SEG"; }
   seg_ctx_bar; add "$_SEG"
   seg_cost; [ -n "$_SEG" ] && add "$_SEG"
   printf '%s' "$L"
@@ -445,21 +467,20 @@ render_powerline() {
     _t="$model"; [ -n "$effort" ] && _t="$model $G_BOLT$effort"
     pl_add "$FG_BAR" "$B_MODEL" "$_t"
   fi
-  [ -n "$five_hr" ]   && pl_limit 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"
-  [ -n "$seven_day" ] && pl_limit 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"
+  [ "$five_show" = 1 ] && pl_limit 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"
+  [ "$seven_show" = 1 ] && pl_limit 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"
   _t="ctx $ctx%"
-  if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
+  if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_tok" -gt 0 ] 2>/dev/null && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
     fmt_k "$ctx_tok"; _c=$_K; fmt_k "$ctx_max"; _t="$_t $_c/$_K"
   fi
   pct_bg "$ctx"; pl_add "$FG_BAR" "$_BG" "$_t"
   if [ "$COST_ON" = 1 ]; then
-    intval "$cost_cents"; _c=$_IV
-    intval "$lines_add"; _la=$_IV
-    intval "$lines_del"; _ld=$_IV
-    if [ "$_c" -gt 0 ] || [ "$_la" -gt 0 ] || [ "$_ld" -gt 0 ]; then
-      _f=$(( _c % 100 )); [ "$_f" -lt 10 ] && _f="0$_f"
-      _t="\$$(( _c / 100 )).$_f"
-      [ "$_la" -gt 0 ] || [ "$_ld" -gt 0 ] && _t="$_t +$_la/-$_ld"
+    if [ "$cost_cents" -gt 0 ] || [ "$lines_add" -gt 0 ] || [ "$lines_del" -gt 0 ]; then
+      _f=$(( cost_cents % 100 )); [ "$_f" -lt 10 ] && _f="0$_f"
+      _t="\$$(( cost_cents / 100 )).$_f"
+      if [ "$lines_add" -gt 0 ] || [ "$lines_del" -gt 0 ]; then
+        _t="$_t edits +$lines_add/-$lines_del"
+      fi
       pl_add "$FG_BAR" "$B_COST" "$_t"
     fi
   fi

@@ -152,6 +152,23 @@ function Expired($epoch) {
 $five_stale  = Expired $five_reset
 $seven_stale = Expired $seven_reset
 
+# The same dash covers the *other* way a limit can be unknown: rate_limits only
+# show up after the first API response, so a fresh session has no figures yet.
+# Holding the slot open (5h —) keeps the line from reshuffling the moment you
+# send your first message.
+#
+# But rate_limits never arrive at all for API-key users, and a permanent dash
+# would be a lie. Once a response *has* landed (we have cost or token counts)
+# and the limits are still absent, this account simply doesn't have them: hide.
+$responded = ($cost_cents -gt 0) -or ([int64]("0" + "$ctx_tok") -gt 0)
+$five_show = $true; $seven_show = $true
+if ($five -eq $null) {
+  if (-not $responded) { $five = 0; $five_stale = $true } else { $five_show = $false }
+}
+if ($seven -eq $null) {
+  if (-not $responded) { $seven = 0; $seven_stale = $true } else { $seven_show = $false }
+}
+
 # Pace: "at this burn rate, where does the window end up?" The window length is
 # fixed (5h / 7d) and resets_at is its end, so elapsed — and therefore the
 # projection — is pure local arithmetic. Early in a window a couple of percent
@@ -264,7 +281,8 @@ function Seg-Cost {                        # -> '' when nothing spent yet
   if ($cost_cents -eq 0 -and $lines_add -eq 0 -and $lines_del -eq 0) { return '' }
   $s = "$E_DIM`$$([int][math]::Floor($cost_cents / 100)).$('{0:d2}' -f ($cost_cents % 100))$NC"
   if ($lines_add -gt 0 -or $lines_del -gt 0) {
-    $s += " $E_GREEN+$lines_add$NC$E_DIM/$NC$E_RED-$lines_del$NC"
+    # labelled: these are the lines *this session* edited, not the working tree
+    $s += " ${E_DIM}edits $E_GREEN+$lines_add$NC$E_DIM/$NC$E_RED-$lines_del$NC"
   }
   return $s
 }
@@ -295,8 +313,8 @@ function Seg-Ctx($bars) {
 function Render-Flat($bars) {
   $segs = @(); $segs += Seg-Dir
   if ($model) { $segs += Seg-Model }
-  if ($five  -ne $null) { $segs += (Seg-Limit '5h' $five  $five_reset  $bars $five_stale  $W_5H) }
-  if ($seven -ne $null) { $segs += (Seg-Limit '7d' $seven $seven_reset $bars $seven_stale $W_7D) }
+  if ($five_show)  { $segs += (Seg-Limit '5h' $five  $five_reset  $bars $five_stale  $W_5H) }
+  if ($seven_show) { $segs += (Seg-Limit '7d' $seven $seven_reset $bars $seven_stale $W_7D) }
   $segs += (Seg-Ctx $bars)
   $c = Seg-Cost
   if ($c) { $segs += $c }
@@ -311,9 +329,9 @@ function Render-Powerline {
   $segs += @{ bg=$B_DIR; txt=$t }
   if ($model) { $t = $model; if ($effort) { $t = "$model $G_BOLT$effort" }; $segs += @{ bg=$B_MODEL; txt=$t } }
   foreach ($w in @(
-    @{ lbl='5h'; p=$five;  reset=$five_reset;  stale=$five_stale;  win=$W_5H },
-    @{ lbl='7d'; p=$seven; reset=$seven_reset; stale=$seven_stale; win=$W_7D })) {
-    if ($w.p -eq $null) { continue }
+    @{ lbl='5h'; p=$five;  reset=$five_reset;  stale=$five_stale;  win=$W_5H; show=$five_show },
+    @{ lbl='7d'; p=$seven; reset=$seven_reset; stale=$seven_stale; win=$W_7D; show=$seven_show })) {
+    if (-not $w.show) { continue }
     if ($w.stale) { $segs += @{ bg=$B_STALE; txt="$($w.lbl) $G_DASH" }; continue }
     $t = "$($w.lbl) $($w.p)%"
     $pj = Pace $w.p $w.reset $w.win
@@ -328,7 +346,7 @@ function Render-Powerline {
   $segs += @{ bg=(Pct-Bg $ctx); txt=$t }
   if ($COST_ON -and ($cost_cents -gt 0 -or $lines_add -gt 0 -or $lines_del -gt 0)) {
     $t = "`$$([int][math]::Floor($cost_cents / 100)).$('{0:d2}' -f ($cost_cents % 100))"
-    if ($lines_add -gt 0 -or $lines_del -gt 0) { $t = "$t +$lines_add/-$lines_del" }
+    if ($lines_add -gt 0 -or $lines_del -gt 0) { $t = "$t edits +$lines_add/-$lines_del" }
     $segs += @{ bg=$B_COST; txt=$t }
   }
 

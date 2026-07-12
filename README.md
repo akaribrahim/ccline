@@ -20,7 +20,7 @@ my-project · Opus 4.8 1M ⚡high · 5h 4% ↺4h49m · 7d 12% ↺3d5h · ctx 5% 
 | 7-day limit | `7d 12% ↺3d5h` | weekly limit used % + reset countdown |
 | **Burn-rate warning** | `⇈173%` | where the window lands **at this rate** — see [Pace](#pace) |
 | Context | `ctx 5% 47k/1.0M` | context window used % + tokens / size |
-| Session cost `·` diff | `$1.24 +128/-34` | cost so far + lines added/removed this session |
+| Session cost `·` edits | `$1.24 edits +128/-34` | cost so far + lines this **session** added/removed (not the working tree's diff) |
 
 Percentages are **color-graded**: green `<50%` → yellow `≥50%` → orange `≥75%` → red `≥90%` (thresholds configurable). Segments that Claude doesn't report (e.g. limits before the first API response) are hidden automatically.
 
@@ -143,17 +143,24 @@ So the installer also sets **`refreshInterval: 10`** in `settings.json`, which r
 
 That keeps the reset countdowns ticking and lets the git segment notice a branch you switched in another terminal — or one a background subagent switched under you. Set it to any value ≥ 1 (or drop the key to go back to events-only).
 
-**Usage percentages are the exception.** `rate_limits` only arrives with an API response, so no timer can refresh it — the number is a snapshot from your last message, and it does not tick upward on its own. One consequence is handled explicitly: when a window's `resets_at` has passed but you haven't sent a message since, the old percentage is *known to be wrong* (the window rolled over). Rather than keep displaying it, ccline shows a dash:
+**Usage percentages are the exception.** `rate_limits` only arrives with an API response, so no timer can refresh it — the number is a snapshot from your last message, and it does not tick upward on its own.
+
+That leaves two moments where a percentage would be a lie, and both render as a dash — *the slot is here, the value isn't*:
 
 ```
-5h —          the 5-hour window reset; the real figure lands with your next message
+5h —          we don't know yet
 ```
+
+- **A fresh session**, before your first message. The figures simply haven't arrived. Holding the slot open keeps the line from reshuffling the moment they do.
+- **A window that has already reset** while you sat idle. The old percentage is now *known* to be wrong, so we stop showing it; the real figure lands with your next message.
+
+A dash that never resolves would be its own lie, though: `rate_limits` never arrives at all on API-key accounts. So once a response *has* landed (we have cost or token counts) and the limits are still missing, ccline concludes this account doesn't have them and drops both segments for good.
 
 | Segment | Refreshed by |
 |---|---|
 | Directory, git branch/dirty, worktree | every run — so every 10 s with `refreshInterval` |
-| Reset countdowns (`↺2h13m`) | every run — computed locally from `resets_at` |
-| Model, effort, context | every event — they only change when the conversation does |
+| Reset countdowns (`↺2h13m`), pace (`⇈173%`) | every run — computed locally from `resets_at` |
+| Model, effort, context, cost, PR | every event — they only change when the conversation does |
 | **5h / 7d percentages** | **API responses only** — i.e. when you send a message |
 
 ## Requirements
