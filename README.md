@@ -13,7 +13,7 @@ my-project · Opus 4.8 1M ⚡high · 5h 4% ↺4h49m · 7d 12% ↺3d5h · ctx 5% 
 | Segment | Example | Source |
 |---|---|---|
 | Directory `·` git branch | `my-project · main ●` | cwd + git (● = uncommitted changes) |
-| Git worktree | `⑂feature` | shown only inside a linked worktree (great for telling apart several terminals, one per worktree) |
+| Git worktree | `⑂feature` | shown only inside a linked worktree — and the directory is **tinted per worktree**, see [Telling worktrees apart](#telling-worktrees-apart) |
 | Pull request | `#42 ✓` | PR for the branch: `✓` approved, `✗` changes requested |
 | Model `·` effort | `Opus 4.8 1M ⚡high` | live model + reasoning-effort level |
 | 5-hour limit | `5h 4% ↺4h49m` | session limit used % + reset countdown |
@@ -41,6 +41,21 @@ Read it as: *30% used, and at this rate you'd end the window at 173% — i.e. yo
 It stays quiet when there's nothing to say. Under `CCLINE_PACE_WARN` (default 90%) no marker appears at all — the absence *is* the good news. It also holds its tongue for the first 15% of a window, where a couple of percent would project to nonsense. Orange at 90–99%, red at 100%+ (in `powerline` the whole segment goes red, outranking the used-% color).
 
 Set `CCLINE_PACE=0` to turn it off.
+
+## Telling worktrees apart
+
+If you keep a terminal tab per worktree, the tabs look alike — same project, same status line shape. ccline gives you three independent signals, and one of them you can read without reading at all:
+
+```
+wt-auth  · feat-auth  ⑂wt-auth      ← directory tinted green
+wt-perf  · feat-perf  ⑂wt-perf      ← tinted violet
+wt-docs  · feat-docs  ⑂wt-docs      ← tinted amber
+my-proj  · main                     ← main tree keeps the default cyan
+```
+
+The tint comes from the worktree's **position in `git worktree list`**, not a hash of its name. That matters: with six tints, three worktrees have a ~44% chance that two of them collide on the same colour — which would defeat the point. Positions are distinct by construction, so the first six worktrees can never clash. (Removing a worktree can shift the colours of the ones after it. A recolour is a much smaller cost than two tabs that look identical.)
+
+The main tree is never tinted, so "no colour" stays a meaningful signal: *you're not in a worktree*. Turn the tinting off with `CCLINE_WT_COLOR=0`, or drop the whole worktree segment with `CCLINE_WORKTREE=0`.
 
 ## Styles
 
@@ -109,6 +124,7 @@ Create or edit `~/.claude/ccline.conf` (or set the matching environment variable
 | `CCLINE_COLOR` | `auto` `truecolor` `256` `16` | `auto` | force color depth |
 | `CCLINE_ASCII` | `auto` `1` `0` | `auto` | force ASCII / Unicode glyphs |
 | `CCLINE_WORKTREE` | `auto` `0` | `auto` | `⑂name` when in a linked worktree; `0` hides it |
+| `CCLINE_WT_COLOR` | `auto` `0` | `auto` | tint the directory per worktree ([why](#telling-worktrees-apart)) |
 | `CCLINE_PACE` | `auto` `0` | `auto` | burn-rate projection on the limits ([Pace](#pace)) |
 | `CCLINE_PACE_WARN` | 0–999 | `90` | projected % at which the `⇈` marker appears |
 | `CCLINE_PR` | `auto` `0` | `auto` | `#42 ✓` pull-request segment |

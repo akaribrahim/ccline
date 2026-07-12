@@ -44,6 +44,7 @@ $HIGH = [int](Cfg 'CCLINE_HIGH' '75')
 $CRIT = [int](Cfg 'CCLINE_CRIT' '90')
 $PACE_WARN = [int](Cfg 'CCLINE_PACE_WARN' '90')
 $WT_ON   = (Cfg 'CCLINE_WORKTREE' 'auto') -notmatch '^(0|false|no|off)$'
+$WTC_ON  = (Cfg 'CCLINE_WT_COLOR' 'auto') -notmatch '^(0|false|no|off)$'
 $PACE_ON = (Cfg 'CCLINE_PACE' 'auto')     -notmatch '^(0|false|no|off)$'
 $COST_ON = (Cfg 'CCLINE_COST' 'auto')     -notmatch '^(0|false|no|off)$'
 $PR_ON   = (Cfg 'CCLINE_PR' 'auto')       -notmatch '^(0|false|no|off)$'
@@ -85,16 +86,22 @@ if ($DEPTH -eq 'truecolor') {
   $B_DIR='48;2;38;78;84'; $B_MODEL='48;2;58;50;82'; $B_GREEN='48;2;40;72;40'
   $B_YELLOW='48;2;82;74;26'; $B_ORANGE='48;2;88;54;18'; $B_RED='48;2;88;32;32'
   $B_STALE='48;2;58;58;58'; $B_COST='48;2;48;48;56'; $FG_BAR='38;2;235;235;235'
+  $WC_F=@('1;38;2;120;200;120','1;38;2;185;150;235','1;38;2;225;170;80','1;38;2;110;165;235','1;38;2;230;130;180','1;38;2;235;120;100')
+  $WC_B=@('48;2;40;72;40','48;2;58;46;86','48;2;86;62;22','48;2;32;56;94','48;2;84;38;64','48;2;90;40;32')
 } elseif ($DEPTH -eq '256') {
   $C_DIR='1;38;5;80'; $C_DIM='38;5;244'; $C_MODEL='38;5;141'; $C_EFFORT='38;5;179'
   $C_GREEN='38;5;114'; $C_YELLOW='38;5;185'; $C_ORANGE='38;5;208'; $C_RED='38;5;203'
   $B_DIR='48;5;23'; $B_MODEL='48;5;60'; $B_GREEN='48;5;22'; $B_YELLOW='48;5;58'
   $B_ORANGE='48;5;94'; $B_RED='48;5;52'; $B_STALE='48;5;238'; $B_COST='48;5;236'; $FG_BAR='38;5;255'
+  $WC_F=@('1;38;5;114','1;38;5;141','1;38;5;179','1;38;5;75','1;38;5;175','1;38;5;209')
+  $WC_B=@('48;5;22','48;5;60','48;5;94','48;5;24','48;5;89','48;5;52')
 } else {
   $C_DIR='1;36'; $C_DIM='90'; $C_MODEL='35'; $C_EFFORT='33'
   $C_GREEN='32'; $C_YELLOW='33'; $C_ORANGE='33'; $C_RED='31'
   $B_DIR='44'; $B_MODEL='45'; $B_GREEN='42'; $B_YELLOW='43'; $B_ORANGE='43'; $B_RED='41'
   $B_STALE='100'; $B_COST='100'; $FG_BAR='97'
+  $WC_F=@('1;32','1;35','1;33','1;34','1;95','1;31')
+  $WC_B=@('42','45','43','44','105','41')
 }
 $E_DIR=E $C_DIR; $E_DIM=E $C_DIM; $E_MODEL=E $C_MODEL; $E_EFFORT=E $C_EFFORT
 $E_GREEN=E $C_GREEN; $E_YELLOW=E $C_YELLOW; $E_ORANGE=E $C_ORANGE; $E_RED=E $C_RED
@@ -203,7 +210,7 @@ if (-not $effort) {
 # One `git status --porcelain=v2 --branch -uno` yields branch AND dirtiness.
 # Every git call is a process spawn, so keep it to one: -uno skips the untracked
 # walk (the expensive part) and the header lines carry the branch.
-$git_branch = ''; $git_dirty = $false; $oid = ''
+$git_branch = ''; $git_dirty = $false; $oid = ''; $top = ''
 if ($cwd -and (Test-Path $cwd)) {
   $st = @(git -C $cwd status --porcelain=v2 --branch -uno 2>$null)
   if ($LASTEXITCODE -eq 0) {
@@ -218,15 +225,45 @@ if ($cwd -and (Test-Path $cwd)) {
       else { $git_branch = '' }
     }
   }
-  # Fall back to git whenever the payload didn't name a worktree — older Claude
-  # Code has no .workspace at all, and we shouldn't bet the badge on a newer one
-  # always populating .workspace.git_worktree.
-  if (-not $git_worktree -and $WT_ON -and $git_branch) {
+  # Ask git where we are rather than trusting the payload to carry it: older
+  # Claude Code has no .workspace at all, and we shouldn't bet the badge on a
+  # newer one always populating .workspace.git_worktree. A linked worktree has a
+  # git-dir (.git/worktrees/<n>) distinct from the shared git-common-dir.
+  if ($WT_ON -and $git_branch) {
     $rp = @(git -C $cwd rev-parse --git-dir --git-common-dir --show-toplevel 2>$null)
-    if ($rp.Count -ge 3 -and $rp[0] -ne $rp[1]) { $git_worktree = Split-Path $rp[2].Trim() -Leaf }
+    if ($rp.Count -ge 3 -and $rp[0] -ne $rp[1]) {
+      $top = $rp[2].Trim()
+      if (-not $git_worktree) { $git_worktree = Split-Path $top -Leaf }
+    } else {
+      $git_worktree = ''                   # main tree: the payload can't override that
+    }
+  } else {
+    $git_worktree = ''
   }
 }
 if (-not $WT_ON) { $git_worktree = '' }
+
+# ---------------------------------------------------------- worktree colour --
+# Three tabs, three worktrees, three colours: the directory segment is tinted so
+# you can tell which tab you're in without reading a word. The main tree keeps
+# the default cyan, so "not in a worktree" stays a distinct signal.
+#
+# The colour comes from the worktree's *position* in `git worktree list`, not a
+# hash of its name: a hash collides (six tints, three worktrees -> ~44% chance
+# two match), while positions are distinct by construction.
+if ($WTC_ON -and $git_worktree -and $top) {
+  $wi = -1; $i = -1                        # the main tree is listed first; skip it
+  foreach ($line in @(git -C $cwd worktree list --porcelain 2>$null)) {
+    if ($line -like 'worktree *') {
+      if ($line.Substring(9) -eq $top) { $wi = $i; break }
+      $i++
+    }
+  }
+  if ($wi -ge 0) {
+    $C_DIR = $WC_F[$wi % 6]; $B_DIR = $WC_B[$wi % 6]
+    $E_DIR = E $C_DIR
+  }
+}
 
 # ------------------------------------------------------------------ helpers --
 function Fmt-K($n) {

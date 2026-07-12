@@ -33,7 +33,7 @@ trim() {                                   # -> _R  (no fork)
 
 # One pass over the conf file; last assignment of a key wins.
 CF_STYLE=''; CF_COLOR=''; CF_ASCII=''; CF_WARN=''; CF_HIGH=''; CF_CRIT=''; CF_WT=''
-CF_PACE=''; CF_PACEWARN=''; CF_COST=''; CF_PR=''
+CF_PACE=''; CF_PACEWARN=''; CF_COST=''; CF_PR=''; CF_WTCOLOR=''
 if [ -f "$CONF" ]; then
   while IFS= read -r _l || [ -n "$_l" ]; do
     case $_l in ''|'#'*) continue ;; *=*) ;; *) continue ;; esac
@@ -48,6 +48,7 @@ if [ -f "$CONF" ]; then
       CCLINE_HIGH)      CF_HIGH=$_v ;;
       CCLINE_CRIT)      CF_CRIT=$_v ;;
       CCLINE_WORKTREE)  CF_WT=$_v ;;
+      CCLINE_WT_COLOR)  CF_WTCOLOR=$_v ;;
       CCLINE_PACE)      CF_PACE=$_v ;;
       CCLINE_PACE_WARN) CF_PACEWARN=$_v ;;
       CCLINE_COST)      CF_COST=$_v ;;
@@ -67,10 +68,12 @@ PACE_WARN="${CCLINE_PACE_WARN:-${CF_PACEWARN:-90}}"
 COST="${CCLINE_COST:-${CF_COST:-auto}}"
 PR="${CCLINE_PR:-${CF_PR:-auto}}"
 off() { case "$1" in 0|false|no|off) return 0 ;; *) return 1 ;; esac; }
+WT_COLOR="${CCLINE_WT_COLOR:-${CF_WTCOLOR:-auto}}"
 off "$WORKTREE" && WT_ON=0 || WT_ON=1
 off "$PACE"     && PACE_ON=0 || PACE_ON=1
 off "$COST"     && COST_ON=0 || COST_ON=1
 off "$PR"       && PR_ON=0   || PR_ON=1
+off "$WT_COLOR" && WTC_ON=0  || WTC_ON=1
 
 # ---------------------------------------------------- capability detection --
 case "$FORCE_COLOR" in
@@ -107,16 +110,34 @@ if [ "$DEPTH" = truecolor ]; then
   B_DIR='48;2;38;78;84'; B_MODEL='48;2;58;50;82'; B_GREEN='48;2;40;72;40'
   B_YELLOW='48;2;82;74;26'; B_ORANGE='48;2;88;54;18'; B_RED='48;2;88;32;32'
   B_STALE='48;2;58;58;58'; B_COST='48;2;48;48;56'; FG_BAR='38;2;235;235;235'
+  WC0_F='1;38;2;120;200;120'; WC0_B='48;2;40;72;40'      # worktree tints
+  WC1_F='1;38;2;185;150;235'; WC1_B='48;2;58;46;86'
+  WC2_F='1;38;2;225;170;80';  WC2_B='48;2;86;62;22'
+  WC3_F='1;38;2;110;165;235'; WC3_B='48;2;32;56;94'
+  WC4_F='1;38;2;230;130;180'; WC4_B='48;2;84;38;64'
+  WC5_F='1;38;2;235;120;100'; WC5_B='48;2;90;40;32'
 elif [ "$DEPTH" = 256 ]; then
   C_DIR='1;38;5;80'; C_DIM='38;5;244'; C_MODEL='38;5;141'; C_EFFORT='38;5;179'
   C_GREEN='38;5;114'; C_YELLOW='38;5;185'; C_ORANGE='38;5;208'; C_RED='38;5;203'
   B_DIR='48;5;23'; B_MODEL='48;5;60'; B_GREEN='48;5;22'; B_YELLOW='48;5;58'
   B_ORANGE='48;5;94'; B_RED='48;5;52'; B_STALE='48;5;238'; B_COST='48;5;236'; FG_BAR='38;5;255'
+  WC0_F='1;38;5;114'; WC0_B='48;5;22'                    # worktree tints
+  WC1_F='1;38;5;141'; WC1_B='48;5;60'
+  WC2_F='1;38;5;179'; WC2_B='48;5;94'
+  WC3_F='1;38;5;75';  WC3_B='48;5;24'
+  WC4_F='1;38;5;175'; WC4_B='48;5;89'
+  WC5_F='1;38;5;209'; WC5_B='48;5;52'
 else
   C_DIR='1;36'; C_DIM='90'; C_MODEL='35'; C_EFFORT='33'
   C_GREEN='32'; C_YELLOW='33'; C_ORANGE='33'; C_RED='31'
   B_DIR='44'; B_MODEL='45'; B_GREEN='42'; B_YELLOW='43'; B_ORANGE='43'; B_RED='41'
   B_STALE='100'; B_COST='100'; FG_BAR='97'
+  WC0_F='1;32'; WC0_B='42'                               # worktree tints
+  WC1_F='1;35'; WC1_B='45'
+  WC2_F='1;33'; WC2_B='43'
+  WC3_F='1;34'; WC3_B='44'
+  WC4_F='1;95'; WC4_B='105'
+  WC5_F='1;31'; WC5_B='41'
 fi
 
 ESC=$(printf '\033')
@@ -278,17 +299,63 @@ if [ "$git_branch" = '(detached)' ]; then
     *) git_branch=${_oid%"${_oid#???????}"} ;;
   esac
 fi
-# Fall back to git whenever the payload didn't name a worktree — older Claude
-# Code has no .workspace at all, and we shouldn't bet the badge on a newer one
-# always populating .workspace.git_worktree. Costs one rev-parse, and only in a
-# repo that didn't already answer the question.
-if [ -z "$git_worktree" ] && [ "$WT_ON" = 1 ] && [ -n "$git_branch" ]; then
+# Ask git where we are rather than trusting the payload to carry it: older
+# Claude Code has no .workspace at all, and we shouldn't bet the badge on a
+# newer one always populating .workspace.git_worktree. A linked worktree has a
+# git-dir (.git/worktrees/<n>) distinct from the shared git-common-dir.
+_gd=''; _gcd=''; _top=''
+if [ "$WT_ON" = 1 ] && [ -n "$git_branch" ]; then
   { read -r _gd; read -r _gcd; read -r _top; } <<EOF
 $(git -C "$cwd" rev-parse --git-dir --git-common-dir --show-toplevel 2>/dev/null)
 EOF
-  [ -n "$_gd" ] && [ "$_gd" != "$_gcd" ] && git_worktree=${_top##*/}
+  if [ -n "$_gd" ] && [ "$_gd" != "$_gcd" ]; then
+    [ -z "$git_worktree" ] && git_worktree=${_top##*/}
+  else
+    git_worktree=''                        # main tree: the payload can't override that
+  fi
+else
+  git_worktree=''
 fi
-[ "$WT_ON" = 1 ] || git_worktree=''
+
+# ---------------------------------------------------------- worktree colour --
+# Three tabs, three worktrees, three colours: the directory segment is tinted so
+# you can tell which tab you're in without reading a word. The main tree keeps
+# the default cyan, so "not in a worktree" stays a distinct signal.
+#
+# The colour comes from the worktree's *position* in `git worktree list`, not a
+# hash of its name. A hash collides: with six tints, three worktrees have a ~44%
+# chance that two of them land on the same colour — which defeats the whole
+# point. Positions are distinct by construction, so the first six worktrees can
+# never clash. (Removing a worktree can shift the ones after it; a recolour is a
+# far smaller cost than two tabs that look alike.)
+wt_index() {                               # -> _WI (0-based among linked, -1 unknown)
+  _WI=-1
+  [ -n "$_top" ] || return
+  _i=-1                                    # the main tree is listed first; skip it
+  while IFS= read -r _wl; do
+    case $_wl in
+      'worktree '*)
+        [ "${_wl#worktree }" = "$_top" ] && { _WI=$_i; return; }
+        _i=$(( _i + 1 )) ;;
+    esac
+  done <<EOF
+$(git -C "$cwd" worktree list --porcelain 2>/dev/null)
+EOF
+}
+if [ "$WTC_ON" = 1 ] && [ -n "$git_worktree" ]; then
+  wt_index
+  if [ "$_WI" -ge 0 ]; then
+    case $(( _WI % 6 )) in
+      0) C_DIR=$WC0_F; B_DIR=$WC0_B ;;
+      1) C_DIR=$WC1_F; B_DIR=$WC1_B ;;
+      2) C_DIR=$WC2_F; B_DIR=$WC2_B ;;
+      3) C_DIR=$WC3_F; B_DIR=$WC3_B ;;
+      4) C_DIR=$WC4_F; B_DIR=$WC4_B ;;
+      5) C_DIR=$WC5_F; B_DIR=$WC5_B ;;
+    esac
+    E_DIR="$ESC[${C_DIR}m"
+  fi
+fi
 
 # ------------------------------------------------------------------ helpers --
 fmt_k() {                                  # 47210 -> _K=47k, 1000000 -> _K=1.0M

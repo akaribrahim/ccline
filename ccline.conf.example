@@ -17,6 +17,12 @@ CCLINE_ASCII=auto
 # terminal is a different worktree); 0 hides it.
 CCLINE_WORKTREE=auto
 
+# Tint the directory segment per worktree: auto | 0
+# Each worktree gets its own colour (from its position in `git worktree list`,
+# so two worktrees can never collide on the same one); the main tree keeps the
+# default cyan. Lets you tell one worktree tab from another at a glance.
+CCLINE_WT_COLOR=auto
+
 # Burn-rate projection on the 5h / 7d limits: auto | 0
 # "5h 30% ⇈173%" = at this rate the window ends at 173%, i.e. you hit the wall
 # before it resets. Computed locally from resets_at; silent while you're under
