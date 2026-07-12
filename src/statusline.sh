@@ -278,8 +278,11 @@ if [ "$git_branch" = '(detached)' ]; then
     *) git_branch=${_oid%"${_oid#???????}"} ;;
   esac
 fi
-# Older Claude Code (no .workspace in the payload): probe git for the worktree.
-if [ "$has_ws" != 1 ] && [ "$WT_ON" = 1 ] && [ -n "$git_branch" ]; then
+# Fall back to git whenever the payload didn't name a worktree — older Claude
+# Code has no .workspace at all, and we shouldn't bet the badge on a newer one
+# always populating .workspace.git_worktree. Costs one rev-parse, and only in a
+# repo that didn't already answer the question.
+if [ -z "$git_worktree" ] && [ "$WT_ON" = 1 ] && [ -n "$git_branch" ]; then
   { read -r _gd; read -r _gcd; read -r _top; } <<EOF
 $(git -C "$cwd" rev-parse --git-dir --git-common-dir --show-toplevel 2>/dev/null)
 EOF

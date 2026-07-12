@@ -218,8 +218,10 @@ if ($cwd -and (Test-Path $cwd)) {
       else { $git_branch = '' }
     }
   }
-  # Older Claude Code (no .workspace in the payload): probe git for the worktree.
-  if (-not $ws -and $WT_ON -and $git_branch) {
+  # Fall back to git whenever the payload didn't name a worktree — older Claude
+  # Code has no .workspace at all, and we shouldn't bet the badge on a newer one
+  # always populating .workspace.git_worktree.
+  if (-not $git_worktree -and $WT_ON -and $git_branch) {
     $rp = @(git -C $cwd rev-parse --git-dir --git-common-dir --show-toplevel 2>$null)
     if ($rp.Count -ge 3 -and $rp[0] -ne $rp[1]) { $git_worktree = Split-Path $rp[2].Trim() -Leaf }
   }
