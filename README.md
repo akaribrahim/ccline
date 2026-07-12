@@ -13,12 +13,15 @@ my-project · Opus 4.8 1M ⚡high · 5h 4% ↺4h49m · 7d 12% ↺3d5h · ctx 5% 
 | Segment | Example | Source |
 |---|---|---|
 | Directory `·` git branch | `my-project · main ●` | cwd + git (● = uncommitted changes) |
+| Git worktree | `⑂feature` | shown only inside a linked worktree (great for telling apart several terminals, one per worktree) |
 | Model `·` effort | `Opus 4.8 1M ⚡high` | live model + reasoning-effort level |
 | 5-hour limit | `5h 4% ↺4h49m` | session limit used % + reset countdown |
 | 7-day limit | `7d 12% ↺3d5h` | weekly limit used % + reset countdown |
 | Context | `ctx 5% 47k/1.0M` | context window used % + tokens / size |
 
 Percentages are **color-graded**: green `<50%` → yellow `≥50%` → orange `≥75%` → red `≥90%` (thresholds configurable). Segments that Claude doesn't report (e.g. limits before the first API response) are hidden automatically.
+
+A limit reads `5h —` when its window has already reset but no new usage figure has arrived yet — see [Freshness](#freshness).
 
 ## Styles
 
@@ -63,7 +66,7 @@ bash install.sh            # or: bash install.sh powerline
 # Windows:  ./install.ps1 -Style powerline
 ```
 
-The installer copies the status line into `~/.claude/` and points `statusLine.command` in `~/.claude/settings.json` at it — **after backing settings.json up** to `settings.json.ccline-bak`. If you pass a style (`bash install.sh bars`), it also writes that choice to `~/.claude/ccline.conf`; with no argument it defaults to `plain` and writes no conf file. It never deletes your previous status line script. Open a new Claude Code session to see it.
+The installer copies the status line into `~/.claude/` and points `statusLine.command` in `~/.claude/settings.json` at it — **after backing settings.json up** to `settings.json.ccline-bak`. It also sets `statusLine.refreshInterval` to `10` (see [Freshness](#freshness)); export `CCLINE_REFRESH` before running the installer to choose another value. If you pass a style (`bash install.sh bars`), it writes that choice to `~/.claude/ccline.conf`; with no argument it defaults to `plain` and writes no conf file. It never deletes your previous status line script. Open a new Claude Code session to see it.
 
 ## Terminal support
 
@@ -72,7 +75,7 @@ The installer copies the status line into `~/.claude/` and points `statusLine.co
 | iTerm2 · WezTerm · VS Code · Ghostty · Kitty | truecolor | full | full fidelity |
 | **Terminal.app** | 256 (no truecolor) | full | colors mapped to 256 |
 | Windows Terminal | truecolor | full | full fidelity |
-| PowerShell (legacy conhost) | 256 | ASCII fallback | `·→\|  ⚡→*  ↺→~  █→#` |
+| PowerShell (legacy conhost) | 256 | ASCII fallback | `·→\|  ⚡→*  ↺→~  █→#  ⑂→wt:` |
 | Linux `xterm-256color` | 256 | full | good |
 
 Detection is automatic via `$COLORTERM`, `$TERM_PROGRAM`, `$WT_SESSION`, `$TERM`. Override anytime with `CCLINE_COLOR` / `CCLINE_ASCII`.
@@ -86,6 +89,7 @@ Create or edit `~/.claude/ccline.conf` (or set the matching environment variable
 | `CCLINE_STYLE` | `plain` `bars` `powerline` | `plain` | visual style |
 | `CCLINE_COLOR` | `auto` `truecolor` `256` `16` | `auto` | force color depth |
 | `CCLINE_ASCII` | `auto` `1` `0` | `auto` | force ASCII / Unicode glyphs |
+| `CCLINE_WORKTREE` | `auto` `0` | `auto` | `⑂name` when in a linked worktree; `0` hides it |
 | `CCLINE_WARN` | 0–100 | `50` | yellow threshold |
 | `CCLINE_HIGH` | 0–100 | `75` | orange threshold |
 | `CCLINE_CRIT` | 0–100 | `90` | red threshold |
@@ -94,7 +98,40 @@ See [`ccline.conf.example`](ccline.conf.example).
 
 ## How it works
 
-Claude Code feeds the configured `statusLine.command` a JSON blob on stdin (cwd, model, `effort.level`, `rate_limits.{five_hour,seven_day}.{used_percentage,resets_at}`, `context_window.*`). ccline parses it (`jq` on POSIX, `ConvertFrom-Json` on Windows), formats one line, and writes it to stdout. It runs once per refresh — fast and dependency-light.
+Claude Code feeds the configured `statusLine.command` a JSON blob on stdin (cwd, model, `effort.level`, `rate_limits.{five_hour,seven_day}.{used_percentage,resets_at}`, `context_window.*`, `workspace.git_worktree`). ccline parses it (`jq` on POSIX, `ConvertFrom-Json` on Windows), formats one line, and writes it to stdout.
+
+It is built to be cheap to re-run: one `jq` call, one `git` call, and no subshells in the render path — about **20 ms** per line. That matters, because Claude Code re-runs the command often and *slow scripts block the status line from updating*.
+
+## Freshness
+
+Different segments go stale in different ways, and it's worth knowing which is which.
+
+Claude Code re-runs the status line **on conversation events** — each new assistant message, after `/compact`, on permission-mode and vim-mode changes — debounced at 300 ms. Left at that, anything time-based freezes between messages: sit idle for twenty minutes and the countdown still claims `↺2h13m`.
+
+So the installer also sets **`refreshInterval: 10`** in `settings.json`, which re-runs the command every 10 seconds on top of those events:
+
+```json
+"statusLine": {
+  "type": "command",
+  "command": "bash ~/.claude/ccline.sh",
+  "refreshInterval": 10
+}
+```
+
+That keeps the reset countdowns ticking and lets the git segment notice a branch you switched in another terminal — or one a background subagent switched under you. Set it to any value ≥ 1 (or drop the key to go back to events-only).
+
+**Usage percentages are the exception.** `rate_limits` only arrives with an API response, so no timer can refresh it — the number is a snapshot from your last message, and it does not tick upward on its own. One consequence is handled explicitly: when a window's `resets_at` has passed but you haven't sent a message since, the old percentage is *known to be wrong* (the window rolled over). Rather than keep displaying it, ccline shows a dash:
+
+```
+5h —          the 5-hour window reset; the real figure lands with your next message
+```
+
+| Segment | Refreshed by |
+|---|---|
+| Directory, git branch/dirty, worktree | every run — so every 10 s with `refreshInterval` |
+| Reset countdowns (`↺2h13m`) | every run — computed locally from `resets_at` |
+| Model, effort, context | every event — they only change when the conversation does |
+| **5h / 7d percentages** | **API responses only** — i.e. when you send a message |
 
 ## Requirements
 

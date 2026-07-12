@@ -56,11 +56,15 @@ if (Test-Path $settings) {
 } else {
   $obj = [pscustomobject]@{}
 }
-$sl = [pscustomobject]@{ type = 'command'; command = $cmd }
+# refreshInterval re-runs the command every N seconds on top of Claude Code's
+# event-driven updates. Without it the reset countdowns freeze and git state
+# goes stale whenever the session sits idle.
+$refresh = if ($env:CCLINE_REFRESH) { [int]$env:CCLINE_REFRESH } else { 10 }
+$sl = [pscustomobject]@{ type = 'command'; command = $cmd; refreshInterval = $refresh }
 if ($obj.PSObject.Properties.Name -contains 'statusLine') { $obj.statusLine = $sl }
 else { $obj | Add-Member -NotePropertyName statusLine -NotePropertyValue $sl }
 $obj | ConvertTo-Json -Depth 30 | Set-Content -Path $settings -Encoding UTF8
-Ok 'settings.json updated'
+Ok "settings.json updated — refreshInterval ${refresh}s"
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) { Warn 'git not on PATH — the git branch segment will be hidden.' }
 

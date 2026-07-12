@@ -19,23 +19,22 @@ try { $j = $raw | ConvertFrom-Json } catch { $j = $null }
 
 # ---------------------------------------------------------------- config ----
 $ClaudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $HOME '.claude' }
-function Conf-Get($key, $def) {
-  $confPath = if ($env:CCLINE_CONFIG) { $env:CCLINE_CONFIG } else { Join-Path $ClaudeDir 'ccline.conf' }
-  if (Test-Path $confPath) {
-    $pat = '^\s*' + [regex]::Escape($key) + '\s*='
-    $m = Select-String -Path $confPath -Pattern $pat | Select-Object -Last 1
-    if ($m) {
-      $v = ($m.Line -replace ($pat + '\s*'), '') -replace '\s*$',''
-      $v = $v -replace '^"(.*)"$','$1'
-      if ($v) { return $v }
+
+# Read the conf file once into a hashtable; last assignment of a key wins.
+$CONF_MAP = @{}
+$confPath = if ($env:CCLINE_CONFIG) { $env:CCLINE_CONFIG } else { Join-Path $ClaudeDir 'ccline.conf' }
+if (Test-Path $confPath) {
+  foreach ($line in [IO.File]::ReadAllLines($confPath)) {
+    if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$') {
+      $CONF_MAP[$Matches[1]] = $Matches[2] -replace '^"(.*)"$','$1'
     }
   }
-  return $def
 }
 function Cfg($name, $def) {
   $val = [Environment]::GetEnvironmentVariable($name)
   if ($val) { return $val }
-  return (Conf-Get $name $def)
+  if ($CONF_MAP.ContainsKey($name) -and $CONF_MAP[$name]) { return $CONF_MAP[$name] }
+  return $def
 }
 $STYLE  = Cfg 'CCLINE_STYLE' 'plain'
 $FCOLOR = Cfg 'CCLINE_COLOR' 'auto'
@@ -43,6 +42,7 @@ $FASCII = Cfg 'CCLINE_ASCII' 'auto'
 $WARN = [int](Cfg 'CCLINE_WARN' '50')
 $HIGH = [int](Cfg 'CCLINE_HIGH' '75')
 $CRIT = [int](Cfg 'CCLINE_CRIT' '90')
+$WT_ON = (Cfg 'CCLINE_WORKTREE' 'auto') -notmatch '^(0|false|no|off)$'
 
 # ---------------------------------------------------- capability detection --
 $isWin = $IsWindows -or ($env:OS -eq 'Windows_NT')
@@ -80,27 +80,28 @@ if ($DEPTH -eq 'truecolor') {
   $C_ORANGE='38;2;230;140;40'; $C_RED='38;2;235;77;75'
   $B_DIR='48;2;38;78;84'; $B_MODEL='48;2;58;50;82'; $B_GREEN='48;2;40;72;40'
   $B_YELLOW='48;2;82;74;26'; $B_ORANGE='48;2;88;54;18'; $B_RED='48;2;88;32;32'
-  $FG_BAR='38;2;235;235;235'
+  $B_STALE='48;2;58;58;58'; $FG_BAR='38;2;235;235;235'
 } elseif ($DEPTH -eq '256') {
   $C_DIR='1;38;5;80'; $C_DIM='38;5;244'; $C_MODEL='38;5;141'; $C_EFFORT='38;5;179'
   $C_GREEN='38;5;114'; $C_YELLOW='38;5;185'; $C_ORANGE='38;5;208'; $C_RED='38;5;203'
   $B_DIR='48;5;23'; $B_MODEL='48;5;60'; $B_GREEN='48;5;22'; $B_YELLOW='48;5;58'
-  $B_ORANGE='48;5;94'; $B_RED='48;5;52'; $FG_BAR='38;5;255'
+  $B_ORANGE='48;5;94'; $B_RED='48;5;52'; $B_STALE='48;5;238'; $FG_BAR='38;5;255'
 } else {
   $C_DIR='1;36'; $C_DIM='90'; $C_MODEL='35'; $C_EFFORT='33'
   $C_GREEN='32'; $C_YELLOW='33'; $C_ORANGE='33'; $C_RED='31'
   $B_DIR='44'; $B_MODEL='45'; $B_GREEN='42'; $B_YELLOW='43'; $B_ORANGE='43'; $B_RED='41'
-  $FG_BAR='97'
+  $B_STALE='100'; $FG_BAR='97'
 }
 $E_DIR=E $C_DIR; $E_DIM=E $C_DIM; $E_MODEL=E $C_MODEL; $E_EFFORT=E $C_EFFORT
 $E_GREEN=E $C_GREEN; $E_YELLOW=E $C_YELLOW; $E_ORANGE=E $C_ORANGE; $E_RED=E $C_RED
 
 # ------------------------------------------------------------------- glyphs --
 if ($ASCII) {
-  $G_SEP='|'; $G_RST='~'; $G_BOLT='*'; $G_DOT='*'
+  $G_SEP='|'; $G_RST='~'; $G_BOLT='*'; $G_DOT='*'; $G_WT='wt:'; $G_DASH='-'
   $G_BARF='#'; $G_BARE='-'; $G_BL='['; $G_BR=']'; $PL_ARR=''
 } else {
   $G_SEP=[string][char]0x00B7; $G_RST=[string][char]0x21BA; $G_BOLT=[string][char]0x26A1; $G_DOT=[string][char]0x25CF
+  $G_WT=[string][char]0x2442; $G_DASH=[string][char]0x2014
   $G_BARF=[string][char]0x2588; $G_BARE=[string][char]0x2591; $G_BL=[string][char]0x2595; $G_BR=[string][char]0x258F
   $PL_ARR=[string][char]0xE0B0
 }
@@ -119,10 +120,24 @@ $cw          = Prop $j 'context_window'
 $ctx         = Prop $cw 'used_percentage'
 $ctx_tok     = Prop $cw 'total_input_tokens'
 $ctx_max     = Prop $cw 'context_window_size'
+$ws          = Prop $j 'workspace'
+$git_worktree = [string](Prop $ws 'git_worktree')
 
 function Iv($x) { if ($x -ne $null -and "$x" -ne '') { return [int][math]::Floor([double]$x) } else { return $null } }
 $five = Iv $five; $seven = Iv $seven
 $ctx = Iv $ctx; if ($ctx -eq $null) { $ctx = 0 }
+
+# A rate-limit window whose resets_at has passed is a *known-stale* reading:
+# rate_limits only refresh when an API response arrives, so once the window
+# rolls over the old percentage is simply wrong until the next message. Show a
+# dash rather than a number we know to be false.
+$NOW = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+function Expired($epoch) {
+  if (-not $epoch) { return $false }
+  return ([int64][math]::Floor([double]$epoch) -le $NOW)
+}
+$five_stale  = Expired $five_reset
+$seven_stale = Expired $seven_reset
 
 if ($cwd) { $dir = Split-Path $cwd -Leaf } else { $dir = '~' }
 if (-not $dir) { $dir = '~' }
@@ -135,19 +150,31 @@ if (-not $effort) {
   }
 }
 
-$git_branch = ''; $git_dirty = $false
+# One `git status --porcelain=v2 --branch -uno` yields branch AND dirtiness.
+# Every git call is a process spawn, so keep it to one: -uno skips the untracked
+# walk (the expensive part) and the header lines carry the branch.
+$git_branch = ''; $git_dirty = $false; $oid = ''
 if ($cwd -and (Test-Path $cwd)) {
-  git -C $cwd rev-parse --git-dir 2>$null | Out-Null
+  $st = @(git -C $cwd status --porcelain=v2 --branch -uno 2>$null)
   if ($LASTEXITCODE -eq 0) {
-    $git_branch = "$(git -C $cwd symbolic-ref --short HEAD 2>$null)".Trim()
-    if (-not $git_branch) { $git_branch = "$(git -C $cwd rev-parse --short HEAD 2>$null)".Trim() }
-    if ($git_branch) {
-      git -C $cwd diff --quiet 2>$null; $d1 = $LASTEXITCODE
-      git -C $cwd diff --cached --quiet 2>$null; $d2 = $LASTEXITCODE
-      if ($d1 -ne 0 -or $d2 -ne 0) { $git_dirty = $true }
+    foreach ($line in $st) {
+      if     ($line -like '# branch.head *') { $git_branch = $line.Substring(14).Trim() }
+      elseif ($line -like '# branch.oid *')  { $oid = $line.Substring(13).Trim() }
+      elseif ($line -like '#*')              { }
+      elseif ($line)                         { $git_dirty = $true }
+    }
+    if ($git_branch -eq '(detached)') {
+      if ($oid -and $oid -ne '(initial)') { $git_branch = $oid.Substring(0, [math]::Min(7, $oid.Length)) }
+      else { $git_branch = '' }
     }
   }
+  # Older Claude Code (no .workspace in the payload): probe git for the worktree.
+  if (-not $ws -and $WT_ON -and $git_branch) {
+    $rp = @(git -C $cwd rev-parse --git-dir --git-common-dir --show-toplevel 2>$null)
+    if ($rp.Count -ge 3 -and $rp[0] -ne $rp[1]) { $git_worktree = Split-Path $rp[2].Trim() -Leaf }
+  }
 }
+if (-not $WT_ON) { $git_worktree = '' }
 
 # ------------------------------------------------------------------ helpers --
 function Fmt-K($n) {
@@ -179,6 +206,7 @@ $SEP = "$E_DIM $G_SEP $NC"
 function Seg-Dir {
   $s = "$E_DIR$dir$NC"
   if ($git_branch) { $s += "$SEP$E_DIM$git_branch$NC"; if ($git_dirty) { $s += " $E_ORANGE$G_DOT$NC" } }
+  if ($git_worktree) { $s += " $E_DIM$G_WT$git_worktree$NC" }
   return $s
 }
 function Seg-Model {
@@ -187,7 +215,8 @@ function Seg-Model {
   if ($effort) { $s += " $E_EFFORT$G_BOLT$effort$NC" }
   return $s
 }
-function Seg-Limit($label,$p,$reset,$bars) {
+function Seg-Limit($label,$p,$reset,$bars,$stale) {
+  if ($stale) { return "$E_DIM$label $G_DASH$NC" }
   $pe = Pct-E $p
   if ($bars) { $s = "$E_DIM$label $G_BL$pe$(Bar $p 6)$E_DIM$G_BR $pe$p%$NC" }
   else       { $s = "$E_DIM$label $pe$p%$NC" }
@@ -205,8 +234,8 @@ function Seg-Ctx($bars) {
 function Render-Flat($bars) {
   $segs = @(); $segs += Seg-Dir
   if ($model) { $segs += Seg-Model }
-  if ($five  -ne $null) { $segs += (Seg-Limit '5h' $five  $five_reset  $bars) }
-  if ($seven -ne $null) { $segs += (Seg-Limit '7d' $seven $seven_reset $bars) }
+  if ($five  -ne $null) { $segs += (Seg-Limit '5h' $five  $five_reset  $bars $five_stale) }
+  if ($seven -ne $null) { $segs += (Seg-Limit '7d' $seven $seven_reset $bars $seven_stale) }
   $segs += (Seg-Ctx $bars)
   return ($segs -join $SEP)
 }
@@ -214,10 +243,17 @@ function Render-Powerline {
   $segs = @()
   $t = $dir
   if ($git_branch) { $t = "$dir $G_SEP $git_branch"; if ($git_dirty) { $t = "$t $G_DOT" } }
+  if ($git_worktree) { $t = "$t $G_WT$git_worktree" }
   $segs += @{ bg=$B_DIR; txt=$t }
   if ($model) { $t = $model; if ($effort) { $t = "$model $G_BOLT$effort" }; $segs += @{ bg=$B_MODEL; txt=$t } }
-  if ($five -ne $null)  { $rs = Fmt-Reset $five_reset;  $t = "5h $five%";  if ($rs) { $t = "$t $G_RST$rs" }; $segs += @{ bg=(Pct-Bg $five);  txt=$t } }
-  if ($seven -ne $null) { $rs = Fmt-Reset $seven_reset; $t = "7d $seven%"; if ($rs) { $t = "$t $G_RST$rs" }; $segs += @{ bg=(Pct-Bg $seven); txt=$t } }
+  if ($five -ne $null) {
+    if ($five_stale) { $segs += @{ bg=$B_STALE; txt="5h $G_DASH" } }
+    else { $rs = Fmt-Reset $five_reset; $t = "5h $five%"; if ($rs) { $t = "$t $G_RST$rs" }; $segs += @{ bg=(Pct-Bg $five); txt=$t } }
+  }
+  if ($seven -ne $null) {
+    if ($seven_stale) { $segs += @{ bg=$B_STALE; txt="7d $G_DASH" } }
+    else { $rs = Fmt-Reset $seven_reset; $t = "7d $seven%"; if ($rs) { $t = "$t $G_RST$rs" }; $segs += @{ bg=(Pct-Bg $seven); txt=$t } }
+  }
   $t = "ctx $ctx%"; if ($ctx_tok -and $ctx_max -and ([int64]$ctx_max -gt 0)) { $t = "$t $(Fmt-K $ctx_tok)/$(Fmt-K $ctx_max)" }
   $segs += @{ bg=(Pct-Bg $ctx); txt=$t }
 

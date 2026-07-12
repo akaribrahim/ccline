@@ -12,7 +12,20 @@ CCLINE_COLOR=auto
 # auto uses ASCII on legacy Windows console, Unicode elsewhere.
 CCLINE_ASCII=auto
 
+# Git worktree segment: auto | 0
+# auto shows "⑂name" only when the cwd is a linked worktree (handy when each
+# terminal is a different worktree); 0 hides it.
+CCLINE_WORKTREE=auto
+
 # Percentage thresholds that drive the green -> yellow -> orange -> red colour.
 CCLINE_WARN=50
 CCLINE_HIGH=75
 CCLINE_CRIT=90
+
+# How often the line re-renders is NOT set here — it lives in settings.json:
+#
+#   "statusLine": { "type": "command", "command": "...", "refreshInterval": 10 }
+#
+# Claude Code re-runs the command on conversation events; refreshInterval adds a
+# timer (seconds, min 1) so the reset countdowns keep ticking and the git segment
+# notices branch changes while the session is idle. The installer writes 10.

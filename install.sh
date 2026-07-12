@@ -63,7 +63,12 @@ if [ -n "$STYLE" ]; then
 fi
 
 # 4) point settings.json at ccline (with backup) -----------------------------
+# refreshInterval re-runs the command every N seconds on top of Claude Code's
+# event-driven updates. Without it the reset countdowns freeze and git state
+# goes stale whenever the session sits idle. 10s is plenty for minute-grained
+# countdowns; ccline renders in ~20ms so the cost is negligible.
 CMD="bash $DEST"
+REFRESH="${CCLINE_REFRESH:-10}"
 if [ -f "$SETTINGS" ]; then
   cp "$SETTINGS" "$SETTINGS.ccline-bak"
   ok "backed up settings.json -> settings.json.ccline-bak"
@@ -72,26 +77,27 @@ fi
 if command -v jq >/dev/null 2>&1; then
   tmp=$(mktemp)
   if [ -f "$SETTINGS" ]; then
-    jq --arg c "$CMD" '.statusLine = {type:"command", command:$c}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
+    jq --arg c "$CMD" --argjson r "$REFRESH" \
+       '.statusLine = {type:"command", command:$c, refreshInterval:$r}' "$SETTINGS" > "$tmp" && mv "$tmp" "$SETTINGS"
   else
-    printf '{\n  "statusLine": { "type": "command", "command": "%s" }\n}\n' "$CMD" > "$SETTINGS"
+    printf '{\n  "statusLine": { "type": "command", "command": "%s", "refreshInterval": %s }\n}\n' "$CMD" "$REFRESH" > "$SETTINGS"
   fi
-  ok "settings.json updated (jq)"
+  ok "settings.json updated (jq) — refreshInterval ${REFRESH}s"
 elif command -v python3 >/dev/null 2>&1; then
-  python3 - "$SETTINGS" "$CMD" <<'PY'
+  python3 - "$SETTINGS" "$CMD" "$REFRESH" <<'PY'
 import json, os, sys
-p, cmd = sys.argv[1], sys.argv[2]
+p, cmd, refresh = sys.argv[1], sys.argv[2], int(sys.argv[3])
 d = {}
 if os.path.exists(p):
     try: d = json.load(open(p))
     except Exception: d = {}
-d["statusLine"] = {"type": "command", "command": cmd}
+d["statusLine"] = {"type": "command", "command": cmd, "refreshInterval": refresh}
 json.dump(d, open(p, "w"), indent=2)
 PY
-  ok "settings.json updated (python3)"
+  ok "settings.json updated (python3) — refreshInterval ${REFRESH}s"
 else
   warn "neither jq nor python3 found — add this to $SETTINGS yourself:"
-  warn "  \"statusLine\": { \"type\": \"command\", \"command\": \"$CMD\" }"
+  warn "  \"statusLine\": { \"type\": \"command\", \"command\": \"$CMD\", \"refreshInterval\": $REFRESH }"
 fi
 
 say ""
