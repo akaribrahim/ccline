@@ -33,6 +33,7 @@ trim() {                                   # -> _R  (no fork)
 
 # One pass over the conf file; last assignment of a key wins.
 CF_STYLE=''; CF_COLOR=''; CF_ASCII=''; CF_WARN=''; CF_HIGH=''; CF_CRIT=''; CF_WT=''
+CF_PACE=''; CF_PACEWARN=''; CF_COST=''; CF_PR=''
 if [ -f "$CONF" ]; then
   while IFS= read -r _l || [ -n "$_l" ]; do
     case $_l in ''|'#'*) continue ;; *=*) ;; *) continue ;; esac
@@ -40,13 +41,17 @@ if [ -f "$CONF" ]; then
     trim "${_l#*=}";  _v=$_R
     case $_v in '"'*'"') _v=${_v#\"}; _v=${_v%\"} ;; esac
     case $_k in
-      CCLINE_STYLE)    CF_STYLE=$_v ;;
-      CCLINE_COLOR)    CF_COLOR=$_v ;;
-      CCLINE_ASCII)    CF_ASCII=$_v ;;
-      CCLINE_WARN)     CF_WARN=$_v ;;
-      CCLINE_HIGH)     CF_HIGH=$_v ;;
-      CCLINE_CRIT)     CF_CRIT=$_v ;;
-      CCLINE_WORKTREE) CF_WT=$_v ;;
+      CCLINE_STYLE)     CF_STYLE=$_v ;;
+      CCLINE_COLOR)     CF_COLOR=$_v ;;
+      CCLINE_ASCII)     CF_ASCII=$_v ;;
+      CCLINE_WARN)      CF_WARN=$_v ;;
+      CCLINE_HIGH)      CF_HIGH=$_v ;;
+      CCLINE_CRIT)      CF_CRIT=$_v ;;
+      CCLINE_WORKTREE)  CF_WT=$_v ;;
+      CCLINE_PACE)      CF_PACE=$_v ;;
+      CCLINE_PACE_WARN) CF_PACEWARN=$_v ;;
+      CCLINE_COST)      CF_COST=$_v ;;
+      CCLINE_PR)        CF_PR=$_v ;;
     esac
   done < "$CONF"
 fi
@@ -57,7 +62,15 @@ WARN="${CCLINE_WARN:-${CF_WARN:-50}}"
 HIGH="${CCLINE_HIGH:-${CF_HIGH:-75}}"
 CRIT="${CCLINE_CRIT:-${CF_CRIT:-90}}"
 WORKTREE="${CCLINE_WORKTREE:-${CF_WT:-auto}}"
-case "$WORKTREE" in 0|false|no|off) WT_ON=0 ;; *) WT_ON=1 ;; esac
+PACE="${CCLINE_PACE:-${CF_PACE:-auto}}"
+PACE_WARN="${CCLINE_PACE_WARN:-${CF_PACEWARN:-90}}"
+COST="${CCLINE_COST:-${CF_COST:-auto}}"
+PR="${CCLINE_PR:-${CF_PR:-auto}}"
+off() { case "$1" in 0|false|no|off) return 0 ;; *) return 1 ;; esac; }
+off "$WORKTREE" && WT_ON=0 || WT_ON=1
+off "$PACE"     && PACE_ON=0 || PACE_ON=1
+off "$COST"     && COST_ON=0 || COST_ON=1
+off "$PR"       && PR_ON=0   || PR_ON=1
 
 # ---------------------------------------------------- capability detection --
 case "$FORCE_COLOR" in
@@ -93,17 +106,17 @@ if [ "$DEPTH" = truecolor ]; then
   C_ORANGE='38;2;230;140;40'; C_RED='38;2;235;77;75'
   B_DIR='48;2;38;78;84'; B_MODEL='48;2;58;50;82'; B_GREEN='48;2;40;72;40'
   B_YELLOW='48;2;82;74;26'; B_ORANGE='48;2;88;54;18'; B_RED='48;2;88;32;32'
-  B_STALE='48;2;58;58;58'; FG_BAR='38;2;235;235;235'
+  B_STALE='48;2;58;58;58'; B_COST='48;2;48;48;56'; FG_BAR='38;2;235;235;235'
 elif [ "$DEPTH" = 256 ]; then
   C_DIR='1;38;5;80'; C_DIM='38;5;244'; C_MODEL='38;5;141'; C_EFFORT='38;5;179'
   C_GREEN='38;5;114'; C_YELLOW='38;5;185'; C_ORANGE='38;5;208'; C_RED='38;5;203'
   B_DIR='48;5;23'; B_MODEL='48;5;60'; B_GREEN='48;5;22'; B_YELLOW='48;5;58'
-  B_ORANGE='48;5;94'; B_RED='48;5;52'; B_STALE='48;5;238'; FG_BAR='38;5;255'
+  B_ORANGE='48;5;94'; B_RED='48;5;52'; B_STALE='48;5;238'; B_COST='48;5;236'; FG_BAR='38;5;255'
 else
   C_DIR='1;36'; C_DIM='90'; C_MODEL='35'; C_EFFORT='33'
   C_GREEN='32'; C_YELLOW='33'; C_ORANGE='33'; C_RED='31'
   B_DIR='44'; B_MODEL='45'; B_GREEN='42'; B_YELLOW='43'; B_ORANGE='43'; B_RED='41'
-  B_STALE='100'; FG_BAR='97'
+  B_STALE='100'; B_COST='100'; FG_BAR='97'
 fi
 
 ESC=$(printf '\033')
@@ -117,9 +130,11 @@ E_ORANGE="$ESC[${C_ORANGE}m"; E_RED="$ESC[${C_RED}m"
 if [ "$ASCII" = 1 ]; then
   G_SEP='|'; G_RST='~'; G_BOLT='*'; G_DOT='*'; G_WT='wt:'; G_DASH='-'
   G_BARF='#'; G_BARE='-'; G_BL='['; G_BR=']'; PL_ARR=''
+  G_PACE='^'; G_OK='+'; G_NOK='x'
 else
   G_SEP='·'; G_RST='↺'; G_BOLT='⚡'; G_DOT='●'; G_WT='⑂'; G_DASH='—'
   G_BARF='█'; G_BARE='░'; G_BL='▕'; G_BR='▏'; PL_ARR=$(printf '\356\202\260')
+  G_PACE='⇈'; G_OK='✓'; G_NOK='✗'
 fi
 
 # --------------------------------------------------------------------- now --
@@ -134,7 +149,8 @@ NOW=${EPOCHSECONDS:-}
 # git_worktree is authoritative and we can skip probing git for it entirely.
 _oldifs=$IFS
 IFS=$(printf '\037')
-read -r cwd model effort five_hr five_reset seven_day seven_reset ctx ctx_tok ctx_max wt has_ws <<EOF
+read -r cwd model effort five_hr five_reset seven_day seven_reset ctx ctx_tok ctx_max wt has_ws \
+        cost_cents lines_add lines_del pr_num pr_state <<EOF
 $(printf '%s' "$input" | jq -r '[
   (.cwd // ""),
   (.model.display_name // ""),
@@ -147,7 +163,12 @@ $(printf '%s' "$input" | jq -r '[
   (.context_window.total_input_tokens // ""),
   (.context_window.context_window_size // ""),
   (.workspace.git_worktree // ""),
-  (if .workspace then "1" else "0" end)
+  (if .workspace then "1" else "0" end),
+  ((.cost.total_cost_usd // 0) * 100 | round),
+  (.cost.total_lines_added // 0),
+  (.cost.total_lines_removed // 0),
+  (.pr.number // ""),
+  (.pr.review_state // "" | ascii_downcase)
 ] | map(tostring) | join("\u001f")' 2>/dev/null)
 EOF
 IFS=$_oldifs
@@ -177,12 +198,39 @@ intval "$ctx"; ctx=$_IV
 expired() {                                # -> _EX (1 = window already reset)
   _EX=0
   [ -z "$1" ] && return
-  _t=${1%.*}
-  case $_t in ''|*[!0-9]*) return ;; esac
-  [ "$_t" -le "$NOW" ] && _EX=1
+  _ep=${1%.*}
+  case $_ep in ''|*[!0-9]*) return ;; esac
+  [ "$_ep" -le "$NOW" ] && _EX=1
 }
 expired "$five_reset";  five_stale=$_EX
 expired "$seven_reset"; seven_stale=$_EX
+
+# Pace: "at this burn rate, where does the window end up?" The window length is
+# fixed (5h / 7d) and resets_at is its end, so elapsed — and therefore the
+# projection — is pure local arithmetic; no history file, no extra process.
+#   projected = used% / elapsed_fraction
+# Early in a window a couple of percent projects to absurd numbers, so stay
+# quiet until 15% of it has elapsed, and only speak up at PACE_WARN and above:
+# a marker that appears only when it means something.
+W_5H=18000; W_7D=604800
+pace() {                                   # used% reset window -> _P ('' = quiet)
+  _P=''
+  [ "$PACE_ON" = 1 ] || return
+  [ -z "$1" ] && return
+  [ -z "$2" ] && return
+  _ep=${2%.*}
+  case $_ep in ''|*[!0-9]*) return ;; esac
+  _rem=$(( _ep - NOW ))
+  [ "$_rem" -le 0 ] && return              # already reset — the stale path owns this
+  _el=$(( $3 - _rem ))                     # seconds elapsed in the window
+  [ "$_el" -le 0 ] && return               # clock skew / longer window than we assume
+  [ $(( _el * 100 / $3 )) -lt 15 ] && return
+  [ "$1" -le 0 ] && return
+  _pj=$(( $1 * $3 / _el ))
+  [ "$_pj" -gt 999 ] && _pj=999
+  [ "$_pj" -lt "$PACE_WARN" ] && return
+  _P=$_pj
+}
 
 # ---------------------------------------------------------------------- git --
 # One `git status --porcelain=v2 --branch -uno` yields branch AND dirtiness;
@@ -227,9 +275,9 @@ fmt_k() {                                  # 47210 -> _K=47k, 1000000 -> _K=1.0M
 fmt_reset() {                              # epoch -> _RS=3d5h / 5h12m / 45m ('' if past)
   _RS=''
   [ -z "$1" ] && return
-  _t=${1%.*}
-  case $_t in ''|*[!0-9]*) return ;; esac
-  _d=$(( _t - NOW ))
+  _ep=${1%.*}
+  case $_ep in ''|*[!0-9]*) return ;; esac
+  _d=$(( _ep - NOW ))
   [ "$_d" -le 0 ] && return
   _m=$(( _d / 60 )); _h=$(( _m / 60 )); _dd=$(( _h / 24 )); _h=$(( _h % 24 )); _m=$(( _m % 60 ))
   if   [ "$_dd" -gt 0 ]; then _RS="${_dd}d${_h}h"
@@ -262,6 +310,18 @@ SEP="$E_DIM $G_SEP $R"
 L=""
 add() { if [ -z "$L" ]; then L=$1; else L="$L$SEP$1"; fi; }
 
+pr_mark() {                                # -> _PM glyph, _PME its color ('' = no PR)
+  _PM=''; _PME=$E_DIM
+  [ "$PR_ON" = 1 ] || return
+  [ -z "$pr_num" ] && return
+  case $pr_state in                        # jq lowercases it for us
+    *approv*) _PM=$G_OK;  _PME=$E_GREEN ;;   # approved
+    *change*) _PM=$G_NOK; _PME=$E_ORANGE ;;  # changes_requested
+  esac
+}
+pace_e() {                                 # projected% -> _PE (its color)
+  if [ "$1" -ge 100 ]; then _PE=$E_RED; else _PE=$E_ORANGE; fi
+}
 seg_dir() {                                # -> _SEG
   _SEG="$E_DIR$dir$R"
   if [ -n "$git_branch" ]; then
@@ -269,6 +329,11 @@ seg_dir() {                                # -> _SEG
     [ "$git_dirty" = 1 ] && _SEG="$_SEG $E_ORANGE$G_DOT$R"
   fi
   [ -n "$git_worktree" ] && _SEG="$_SEG $E_DIM$G_WT$git_worktree$R"
+  if [ "$PR_ON" = 1 ] && [ -n "$pr_num" ]; then
+    pr_mark
+    _SEG="$_SEG $E_DIM#$pr_num$R"
+    [ -n "$_PM" ] && _SEG="$_SEG$_PME$_PM$R"
+  fi
 }
 seg_model() {                              # -> _SEG
   _SEG=''
@@ -276,17 +341,33 @@ seg_model() {                              # -> _SEG
   _SEG="$E_MODEL$model$R"
   [ -n "$effort" ] && _SEG="$_SEG $E_EFFORT$G_BOLT$effort$R"
 }
-seg_limit() {                              # label pct reset stale -> _SEG
+seg_limit() {                              # label pct reset stale window -> _SEG
   if [ "$4" = 1 ]; then _SEG="$E_DIM$1 $G_DASH$R"; return; fi
   pct_e "$2"
   _SEG="$E_DIM$1 $_E$2%$R"
+  pace "$2" "$3" "$5"
+  [ -n "$_P" ] && { pace_e "$_P"; _SEG="$_SEG $_PE$G_PACE$_P%$R"; }
   fmt_reset "$3"; [ -n "$_RS" ] && _SEG="$_SEG $E_DIM$G_RST$_RS$R"
 }
-seg_limit_bar() {                          # label pct reset stale -> _SEG
+seg_limit_bar() {                          # label pct reset stale window -> _SEG
   if [ "$4" = 1 ]; then _SEG="$E_DIM$1 $G_DASH$R"; return; fi
   pct_e "$2"; bar "$2" 6
   _SEG="$E_DIM$1 $G_BL$_E$_BAR$E_DIM$G_BR $_E$2%$R"
+  pace "$2" "$3" "$5"
+  [ -n "$_P" ] && { pace_e "$_P"; _SEG="$_SEG $_PE$G_PACE$_P%$R"; }
   fmt_reset "$3"; [ -n "$_RS" ] && _SEG="$_SEG $E_DIM$G_RST$_RS$R"
+}
+seg_cost() {                               # -> _SEG ('' when nothing spent yet)
+  _SEG=''
+  [ "$COST_ON" = 1 ] || return
+  intval "$cost_cents"; _c=$_IV
+  intval "$lines_add"; _la=$_IV
+  intval "$lines_del"; _ld=$_IV
+  [ "$_c" -eq 0 ] && [ "$_la" -eq 0 ] && [ "$_ld" -eq 0 ] && return
+  _f=$(( _c % 100 )); [ "$_f" -lt 10 ] && _f="0$_f"
+  _SEG="$E_DIM\$$(( _c / 100 )).$_f$R"
+  [ "$_la" -gt 0 ] || [ "$_ld" -gt 0 ] && \
+    _SEG="$_SEG $E_GREEN+$_la$R$E_DIM/$R$E_RED-$_ld$R"
 }
 seg_ctx() {                                # -> _SEG
   pct_e "$ctx"
@@ -308,17 +389,19 @@ seg_ctx_bar() {                            # -> _SEG
 render_plain() {
   seg_dir; add "$_SEG"
   seg_model; [ -n "$_SEG" ] && add "$_SEG"
-  [ -n "$five_hr" ]   && { seg_limit 5h "$five_hr" "$five_reset" "$five_stale"; add "$_SEG"; }
-  [ -n "$seven_day" ] && { seg_limit 7d "$seven_day" "$seven_reset" "$seven_stale"; add "$_SEG"; }
+  [ -n "$five_hr" ]   && { seg_limit 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"; add "$_SEG"; }
+  [ -n "$seven_day" ] && { seg_limit 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"; add "$_SEG"; }
   seg_ctx; add "$_SEG"
+  seg_cost; [ -n "$_SEG" ] && add "$_SEG"
   printf '%s' "$L"
 }
 render_bars() {
   seg_dir; add "$_SEG"
   seg_model; [ -n "$_SEG" ] && add "$_SEG"
-  [ -n "$five_hr" ]   && { seg_limit_bar 5h "$five_hr" "$five_reset" "$five_stale"; add "$_SEG"; }
-  [ -n "$seven_day" ] && { seg_limit_bar 7d "$seven_day" "$seven_reset" "$seven_stale"; add "$_SEG"; }
+  [ -n "$five_hr" ]   && { seg_limit_bar 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"; add "$_SEG"; }
+  [ -n "$seven_day" ] && { seg_limit_bar 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"; add "$_SEG"; }
   seg_ctx_bar; add "$_SEG"
+  seg_cost; [ -n "$_SEG" ] && add "$_SEG"
   printf '%s' "$L"
 }
 
@@ -341,28 +424,45 @@ pl_add() {                                 # fg bg text
   fi
   af_of "$_bg"; PREV_AF=$_AF
 }
-pl_limit() {                               # label pct reset stale
+pl_limit() {                               # label pct reset stale window
   if [ "$4" = 1 ]; then pl_add "$FG_BAR" "$B_STALE" "$1 $G_DASH"; return; fi
-  fmt_reset "$3"; _t="$1 $2%"
-  [ -n "$_RS" ] && _t="$_t $G_RST$_RS"
-  pct_bg "$2"; pl_add "$FG_BAR" "$_BG" "$_t"
+  _t="$1 $2%"
+  pace "$2" "$3" "$5"; [ -n "$_P" ] && _t="$_t $G_PACE$_P%"
+  fmt_reset "$3"; [ -n "$_RS" ] && _t="$_t $G_RST$_RS"
+  # a window projected past its cap outranks the used-% colour — that's the point
+  if [ -n "$_P" ] && [ "$_P" -ge 100 ]; then _BG=$B_RED; else pct_bg "$2"; fi
+  pl_add "$FG_BAR" "$_BG" "$_t"
 }
 render_powerline() {
   _t="$dir"
   [ -n "$git_branch" ] && { _t="$dir $G_SEP $git_branch"; [ "$git_dirty" = 1 ] && _t="$_t $G_DOT"; }
   [ -n "$git_worktree" ] && _t="$_t $G_WT$git_worktree"
+  if [ "$PR_ON" = 1 ] && [ -n "$pr_num" ]; then
+    pr_mark; _t="$_t #$pr_num"; [ -n "$_PM" ] && _t="$_t$_PM"
+  fi
   pl_add "$FG_BAR" "$B_DIR" "$_t"
   if [ -n "$model" ]; then
     _t="$model"; [ -n "$effort" ] && _t="$model $G_BOLT$effort"
     pl_add "$FG_BAR" "$B_MODEL" "$_t"
   fi
-  [ -n "$five_hr" ]   && pl_limit 5h "$five_hr" "$five_reset" "$five_stale"
-  [ -n "$seven_day" ] && pl_limit 7d "$seven_day" "$seven_reset" "$seven_stale"
+  [ -n "$five_hr" ]   && pl_limit 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"
+  [ -n "$seven_day" ] && pl_limit 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"
   _t="ctx $ctx%"
   if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
     fmt_k "$ctx_tok"; _c=$_K; fmt_k "$ctx_max"; _t="$_t $_c/$_K"
   fi
   pct_bg "$ctx"; pl_add "$FG_BAR" "$_BG" "$_t"
+  if [ "$COST_ON" = 1 ]; then
+    intval "$cost_cents"; _c=$_IV
+    intval "$lines_add"; _la=$_IV
+    intval "$lines_del"; _ld=$_IV
+    if [ "$_c" -gt 0 ] || [ "$_la" -gt 0 ] || [ "$_ld" -gt 0 ]; then
+      _f=$(( _c % 100 )); [ "$_f" -lt 10 ] && _f="0$_f"
+      _t="\$$(( _c / 100 )).$_f"
+      [ "$_la" -gt 0 ] || [ "$_ld" -gt 0 ] && _t="$_t +$_la/-$_ld"
+      pl_add "$FG_BAR" "$B_COST" "$_t"
+    fi
+  fi
   PL="$PL$R$ESC[${PREV_AF}m$PL_ARR$R"
   printf '%s' "$PL"
 }

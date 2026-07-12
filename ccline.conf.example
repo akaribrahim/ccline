@@ -17,6 +17,20 @@ CCLINE_ASCII=auto
 # terminal is a different worktree); 0 hides it.
 CCLINE_WORKTREE=auto
 
+# Burn-rate projection on the 5h / 7d limits: auto | 0
+# "5h 30% ⇈173%" = at this rate the window ends at 173%, i.e. you hit the wall
+# before it resets. Computed locally from resets_at; silent while you're under
+# CCLINE_PACE_WARN, and for the first 15% of a window (too noisy to project).
+CCLINE_PACE=auto
+CCLINE_PACE_WARN=90
+
+# Pull-request segment ("#42 ✓" / "#42 ✗"): auto | 0. Hidden when the branch
+# has no PR.
+CCLINE_PR=auto
+
+# Session cost + diff ("$1.24 +128/-34"): auto | 0.
+CCLINE_COST=auto
+
 # Percentage thresholds that drive the green -> yellow -> orange -> red colour.
 CCLINE_WARN=50
 CCLINE_HIGH=75

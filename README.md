@@ -14,14 +14,33 @@ my-project · Opus 4.8 1M ⚡high · 5h 4% ↺4h49m · 7d 12% ↺3d5h · ctx 5% 
 |---|---|---|
 | Directory `·` git branch | `my-project · main ●` | cwd + git (● = uncommitted changes) |
 | Git worktree | `⑂feature` | shown only inside a linked worktree (great for telling apart several terminals, one per worktree) |
+| Pull request | `#42 ✓` | PR for the branch: `✓` approved, `✗` changes requested |
 | Model `·` effort | `Opus 4.8 1M ⚡high` | live model + reasoning-effort level |
 | 5-hour limit | `5h 4% ↺4h49m` | session limit used % + reset countdown |
 | 7-day limit | `7d 12% ↺3d5h` | weekly limit used % + reset countdown |
+| **Burn-rate warning** | `⇈173%` | where the window lands **at this rate** — see [Pace](#pace) |
 | Context | `ctx 5% 47k/1.0M` | context window used % + tokens / size |
+| Session cost `·` diff | `$1.24 +128/-34` | cost so far + lines added/removed this session |
 
 Percentages are **color-graded**: green `<50%` → yellow `≥50%` → orange `≥75%` → red `≥90%` (thresholds configurable). Segments that Claude doesn't report (e.g. limits before the first API response) are hidden automatically.
 
 A limit reads `5h —` when its window has already reset but no new usage figure has arrived yet — see [Freshness](#freshness).
+
+## Pace
+
+`5h 30%` tells you where you *are*. It doesn't tell you the thing you actually want to know: **will I hit the wall before this window resets?**
+
+So when you're burning quota faster than the window refills, ccline says so:
+
+```
+5h 30% ⇈173% ↺4h8m
+```
+
+Read it as: *30% used, and at this rate you'd end the window at 173% — i.e. you run out well before the reset.* The window length is fixed (5 hours, 7 days) and `resets_at` is its end, so elapsed time — and therefore the projection — is plain local arithmetic: `used% ÷ elapsed-fraction`. No history file, no extra process, nothing to configure.
+
+It stays quiet when there's nothing to say. Under `CCLINE_PACE_WARN` (default 90%) no marker appears at all — the absence *is* the good news. It also holds its tongue for the first 15% of a window, where a couple of percent would project to nonsense. Orange at 90–99%, red at 100%+ (in `powerline` the whole segment goes red, outranking the used-% color).
+
+Set `CCLINE_PACE=0` to turn it off.
 
 ## Styles
 
@@ -90,6 +109,10 @@ Create or edit `~/.claude/ccline.conf` (or set the matching environment variable
 | `CCLINE_COLOR` | `auto` `truecolor` `256` `16` | `auto` | force color depth |
 | `CCLINE_ASCII` | `auto` `1` `0` | `auto` | force ASCII / Unicode glyphs |
 | `CCLINE_WORKTREE` | `auto` `0` | `auto` | `⑂name` when in a linked worktree; `0` hides it |
+| `CCLINE_PACE` | `auto` `0` | `auto` | burn-rate projection on the limits ([Pace](#pace)) |
+| `CCLINE_PACE_WARN` | 0–999 | `90` | projected % at which the `⇈` marker appears |
+| `CCLINE_PR` | `auto` `0` | `auto` | `#42 ✓` pull-request segment |
+| `CCLINE_COST` | `auto` `0` | `auto` | `$1.24 +128/-34` session cost + diff |
 | `CCLINE_WARN` | 0–100 | `50` | yellow threshold |
 | `CCLINE_HIGH` | 0–100 | `75` | orange threshold |
 | `CCLINE_CRIT` | 0–100 | `90` | red threshold |
