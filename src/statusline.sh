@@ -163,6 +163,17 @@ fi
 NOW=${EPOCHSECONDS:-}
 [ -z "$NOW" ] && NOW=$(date +%s)
 
+# Reset times print as a local clock (18:42), not a countdown, so we need to
+# turn an epoch into wall-clock fields. GNU date wants `-d @EPOCH`, BSD/macOS
+# wants `-r EPOCH` — probe once (`date -r 0` is a valid epoch on BSD, a missing
+# file on GNU). Stash today's day-of-year too so fmt_reset only forks for the
+# reset itself and can tell "later today" from "another day" without recomputing.
+if date -r 0 +%s >/dev/null 2>&1; then DATE_R=1; else DATE_R=0; fi
+epoch_fmt() {                              # epoch strftime -> _EF (local time)
+  if [ "$DATE_R" = 1 ]; then _EF=$(date -r "$1" +"$2"); else _EF=$(date -d "@$1" +"$2"); fi
+}
+epoch_fmt "$NOW" %j; NOW_JDAY=$_EF
+
 # -------------------------------------------------------------- parse input --
 # Single jq call, fields joined by US (0x1f) — a NON-whitespace separator so
 # `read` preserves empty fields (tabs would collapse, shifting columns).
@@ -370,17 +381,21 @@ fmt_k() {                                  # 47210 -> _K=47k, 1000000 -> _K=1.0M
     _K="$(( ($1 + 500) / 1000 ))k"
   fi
 }
-fmt_reset() {                              # epoch -> _RS=3d5h / 5h12m / 45m ('' if past)
+fmt_reset() {                              # epoch -> _RS=18:42 / "Sal 09:00" ('' if past)
   _RS=''
   [ -z "$1" ] && return
   _ep=${1%.*}
   case $_ep in ''|*[!0-9]*) return ;; esac
-  _d=$(( _ep - NOW ))
-  [ "$_d" -le 0 ] && return
-  _m=$(( _d / 60 )); _h=$(( _m / 60 )); _dd=$(( _h / 24 )); _h=$(( _h % 24 )); _m=$(( _m % 60 ))
-  if   [ "$_dd" -gt 0 ]; then _RS="${_dd}d${_h}h"
-  elif [ "$_h"  -gt 0 ]; then _RS="${_h}h${_m}m"
-  else _RS="${_m}m"; fi
+  [ "$_ep" -le "$NOW" ] && return          # already reset — the stale path owns this
+  epoch_fmt "$_ep" %H:%M; _hm=$_EF
+  # Same calendar day -> bare clock; another day (7d window, or a 5h that crosses
+  # midnight) -> prefix the locale's short weekday so the time isn't ambiguous.
+  epoch_fmt "$_ep" %j
+  if [ "$_EF" = "$NOW_JDAY" ]; then
+    _RS=$_hm
+  else
+    epoch_fmt "$_ep" %a; _RS="$_EF $_hm"
+  fi
 }
 pct_e() {                                  # fg escape for a percentage -> _E
   if   [ "$1" -ge "$CRIT" ]; then _E=$E_RED

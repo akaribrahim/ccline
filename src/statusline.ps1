@@ -281,17 +281,18 @@ function Fmt-K($n) {
   }
   return ('{0}k' -f [int][math]::Floor(($n + 500)/1000))
 }
-function Fmt-Reset($epoch) {
+function Fmt-Reset($epoch) {                # epoch -> 18:42 / "Sal 09:00" ('' if past)
   if (-not $epoch) { return '' }
   $e = [int64][math]::Floor([double]$epoch)
   $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
-  $d = $e - $now
-  if ($d -le 0) { return '' }
-  $mm=[int][math]::Floor($d/60); $hh=[int][math]::Floor($mm/60); $dd=[int][math]::Floor($hh/24)
-  $hh=$hh%24; $mm=$mm%60
-  if ($dd -gt 0) { return ('{0}d{1}h' -f $dd,$hh) }
-  elseif ($hh -gt 0) { return ('{0}h{1}m' -f $hh,$mm) }
-  else { return ('{0}m' -f $mm) }
+  if ($e -le $now) { return '' }           # already reset — the stale path owns this
+  $lt = [DateTimeOffset]::FromUnixTimeSeconds($e).LocalDateTime
+  $hm = $lt.ToString('HH:mm')
+  # Same calendar day -> bare clock; another day (7d window, or a 5h that crosses
+  # midnight) -> prefix the culture's short weekday so the time isn't ambiguous.
+  if ($lt.Date -eq [DateTime]::Now.Date) { return $hm }
+  $wd = $lt.ToString('ddd')
+  return "$wd $hm"
 }
 function Pct-E($p) { if ($p -ge $CRIT){$E_RED} elseif ($p -ge $HIGH){$E_ORANGE} elseif ($p -ge $WARN){$E_YELLOW} else {$E_GREEN} }
 function Pct-Bg($p){ if ($p -ge $CRIT){$B_RED} elseif ($p -ge $HIGH){$B_ORANGE} elseif ($p -ge $WARN){$B_YELLOW} else {$B_GREEN} }
