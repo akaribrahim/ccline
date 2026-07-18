@@ -173,6 +173,7 @@ epoch_fmt() {                              # epoch strftime -> _EF (local time)
   if [ "$DATE_R" = 1 ]; then _EF=$(date -r "$1" +"$2"); else _EF=$(date -d "@$1" +"$2"); fi
 }
 epoch_fmt "$NOW" %j; NOW_JDAY=$_EF
+epoch_fmt "$NOW" %a; NOW_WDAY=$_EF
 
 # -------------------------------------------------------------- parse input --
 # Single jq call, fields joined by US (0x1f) — a NON-whitespace separator so
@@ -391,11 +392,13 @@ fmt_reset() {                              # epoch -> _RS=18:42 / "Sal 09:00" ('
   # Same calendar day -> bare clock; another day (7d window, or a 5h that crosses
   # midnight) -> prefix the locale's short weekday so the time isn't ambiguous.
   epoch_fmt "$_ep" %j
-  if [ "$_EF" = "$NOW_JDAY" ]; then
-    _RS=$_hm
-  else
-    epoch_fmt "$_ep" %a; _RS="$_EF $_hm"
-  fi
+  if [ "$_EF" = "$NOW_JDAY" ]; then _RS=$_hm; return; fi
+  # ...except a fresh 7d window ends ~7 days out, landing on today's weekday
+  # again: "Cts 19:25" on a Saturday reads as tonight, a week early. When the
+  # weekday repeats, the day itself is the only thing that disambiguates.
+  epoch_fmt "$_ep" %a
+  [ "$_EF" = "$NOW_WDAY" ] && epoch_fmt "$_ep" '%d %b'
+  _RS="$_EF $_hm"
 }
 pct_e() {                                  # fg escape for a percentage -> _E
   if   [ "$1" -ge "$CRIT" ]; then _E=$E_RED

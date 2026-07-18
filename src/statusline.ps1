@@ -291,7 +291,11 @@ function Fmt-Reset($epoch) {                # epoch -> 18:42 / "Sal 09:00" ('' i
   # Same calendar day -> bare clock; another day (7d window, or a 5h that crosses
   # midnight) -> prefix the culture's short weekday so the time isn't ambiguous.
   if ($lt.Date -eq [DateTime]::Now.Date) { return $hm }
+  # ...except a fresh 7d window ends ~7 days out, landing on today's weekday
+  # again: "Cts 19:25" on a Saturday reads as tonight, a week early. When the
+  # weekday repeats, the day itself is the only thing that disambiguates.
   $wd = $lt.ToString('ddd')
+  if ($wd -eq [DateTime]::Now.ToString('ddd')) { $wd = $lt.ToString('dd MMM') }
   return "$wd $hm"
 }
 function Pct-E($p) { if ($p -ge $CRIT){$E_RED} elseif ($p -ge $HIGH){$E_ORANGE} elseif ($p -ge $WARN){$E_YELLOW} else {$E_GREEN} }
