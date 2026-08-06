@@ -39,6 +39,7 @@ function Cfg($name, $def) {
 $STYLE  = Cfg 'CCLINE_STYLE' 'plain'
 $FCOLOR = Cfg 'CCLINE_COLOR' 'auto'
 $FASCII = Cfg 'CCLINE_ASCII' 'auto'
+$DIRMODE = Cfg 'CCLINE_DIR' 'full'
 $WARN = [int](Cfg 'CCLINE_WARN' '50')
 $HIGH = [int](Cfg 'CCLINE_HIGH' '75')
 $CRIT = [int](Cfg 'CCLINE_CRIT' '90')
@@ -46,7 +47,6 @@ $PACE_WARN = [int](Cfg 'CCLINE_PACE_WARN' '90')
 $WT_ON   = (Cfg 'CCLINE_WORKTREE' 'auto') -notmatch '^(0|false|no|off)$'
 $WTC_ON  = (Cfg 'CCLINE_WT_COLOR' 'auto') -notmatch '^(0|false|no|off)$'
 $PACE_ON = (Cfg 'CCLINE_PACE' 'auto')     -notmatch '^(0|false|no|off)$'
-$COST_ON = (Cfg 'CCLINE_COST' 'auto')     -notmatch '^(0|false|no|off)$'
 $PR_ON   = (Cfg 'CCLINE_PR' 'auto')       -notmatch '^(0|false|no|off)$'
 
 # ---------------------------------------------------- capability detection --
@@ -85,25 +85,30 @@ if ($DEPTH -eq 'truecolor') {
   $C_ORANGE='38;2;230;140;40'; $C_RED='38;2;235;77;75'
   $B_DIR='48;2;38;78;84'; $B_MODEL='48;2;58;50;82'; $B_GREEN='48;2;40;72;40'
   $B_YELLOW='48;2;82;74;26'; $B_ORANGE='48;2;88;54;18'; $B_RED='48;2;88;32;32'
-  $B_STALE='48;2;58;58;58'; $B_COST='48;2;48;48;56'; $FG_BAR='38;2;235;235;235'
+  $B_STALE='48;2;58;58;58'; $FG_BAR='38;2;235;235;235'
   $WC_F=@('1;38;2;120;200;120','1;38;2;185;150;235','1;38;2;225;170;80','1;38;2;110;165;235','1;38;2;230;130;180','1;38;2;235;120;100')
   $WC_B=@('48;2;40;72;40','48;2;58;46;86','48;2;86;62;22','48;2;32;56;94','48;2;84;38;64','48;2;90;40;32')
 } elseif ($DEPTH -eq '256') {
   $C_DIR='1;38;5;80'; $C_DIM='38;5;244'; $C_MODEL='38;5;141'; $C_EFFORT='38;5;179'
   $C_GREEN='38;5;114'; $C_YELLOW='38;5;185'; $C_ORANGE='38;5;208'; $C_RED='38;5;203'
   $B_DIR='48;5;23'; $B_MODEL='48;5;60'; $B_GREEN='48;5;22'; $B_YELLOW='48;5;58'
-  $B_ORANGE='48;5;94'; $B_RED='48;5;52'; $B_STALE='48;5;238'; $B_COST='48;5;236'; $FG_BAR='38;5;255'
+  $B_ORANGE='48;5;94'; $B_RED='48;5;52'; $B_STALE='48;5;238'; $FG_BAR='38;5;255'
   $WC_F=@('1;38;5;114','1;38;5;141','1;38;5;179','1;38;5;75','1;38;5;175','1;38;5;209')
   $WC_B=@('48;5;22','48;5;60','48;5;94','48;5;24','48;5;89','48;5;52')
 } else {
   $C_DIR='1;36'; $C_DIM='90'; $C_MODEL='35'; $C_EFFORT='33'
   $C_GREEN='32'; $C_YELLOW='33'; $C_ORANGE='33'; $C_RED='31'
   $B_DIR='44'; $B_MODEL='45'; $B_GREEN='42'; $B_YELLOW='43'; $B_ORANGE='43'; $B_RED='41'
-  $B_STALE='100'; $B_COST='100'; $FG_BAR='97'
+  $B_STALE='100'; $FG_BAR='97'
   $WC_F=@('1;32','1;35','1;33','1;34','1;95','1;31')
   $WC_B=@('42','45','43','44','105','41')
 }
-$E_DIR=E $C_DIR; $E_DIM=E $C_DIM; $E_MODEL=E $C_MODEL; $E_EFFORT=E $C_EFFORT
+# The branch takes the directory's colour minus the bold — the two read as one
+# unit, and the branch never sits in the dim grey reserved for numbers you
+# glance past. In a worktree $C_DIR is that worktree's tint, so the branch is
+# tinted with it; both are recomputed once the tint is known.
+$E_DIR=E $C_DIR; $E_BRANCH=E ($C_DIR -replace '^1;','')
+$E_DIM=E $C_DIM; $E_MODEL=E $C_MODEL; $E_EFFORT=E $C_EFFORT
 $E_GREEN=E $C_GREEN; $E_YELLOW=E $C_YELLOW; $E_ORANGE=E $C_ORANGE; $E_RED=E $C_RED
 
 # ------------------------------------------------------------------- glyphs --
@@ -135,10 +140,6 @@ $ctx_tok     = Prop $cw 'total_input_tokens'
 $ctx_max     = Prop $cw 'context_window_size'
 $ws          = Prop $j 'workspace'
 $git_worktree = [string](Prop $ws 'git_worktree')
-$cost        = Prop $j 'cost'
-$cost_cents  = [int][math]::Round(([double](Prop $cost 'total_cost_usd')) * 100)
-$lines_add   = [int](Prop $cost 'total_lines_added')
-$lines_del   = [int](Prop $cost 'total_lines_removed')
 $prj         = Prop $j 'pr'
 $pr_num      = [string](Prop $prj 'number')
 $pr_state    = ([string](Prop $prj 'review_state')).ToLowerInvariant()
@@ -166,7 +167,7 @@ $seven_stale = Expired $seven_reset
 #
 # But rate_limits never arrive at all on API-key accounts, and a dash that never
 # resolves is its own lie. The question "does this account have limits?" can't be
-# answered from one payload — a resumed session already has cost and token counts
+# answered from one payload — a resumed session already carries its token counts
 # while the limits are still missing, so those are not the signal. What does
 # answer it: have we *ever* seen limits here? Learn that once, remember it.
 $seenPath = Join-Path $ClaudeDir '.ccline-limits-seen'
@@ -204,7 +205,21 @@ function Pace($used, $reset, $window) {    # -> $null when it should stay quiet
   return $pj
 }
 
-if ($cwd) { $dir = Split-Path $cwd -Leaf } else { $dir = '~' }
+# The directory segment is the whole path, $HOME folded to ~. A basename is
+# ambiguous the moment worktrees are in play: Claude Code puts them under
+# <project>/.claude/worktrees/<name>, so the basename is the worktree's name and
+# the project's name is nowhere on the line — with several sessions open across
+# several projects, every tab reads alike. The path says both, and says where on
+# disk to go. CCLINE_DIR=name restores the basename.
+if ($DIRMODE -eq 'name') {
+  if ($cwd) { $dir = Split-Path $cwd -Leaf } else { $dir = '~' }
+} elseif ($cwd) {
+  $dir = $cwd
+  if ($HOME -and $dir.StartsWith($HOME, [StringComparison]::OrdinalIgnoreCase)) {
+    $rest = $dir.Substring($HOME.Length)
+    if (-not $rest -or $rest[0] -eq '/' -or $rest[0] -eq '\') { $dir = '~' + $rest }
+  }
+} else { $dir = '~' }
 if (-not $dir) { $dir = '~' }
 $model = $model -replace '\(([0-9]+[A-Za-z]*) context\)','$1' -replace '  +',' ' -replace ' +$',''
 if (-not $effort) {
@@ -269,9 +284,20 @@ if ($WTC_ON -and $git_worktree -and $top) {
   }
   if ($wi -ge 0) {
     $C_DIR = $WC_F[$wi % 6]; $B_DIR = $WC_B[$wi % 6]
-    $E_DIR = E $C_DIR
+    $E_DIR = E $C_DIR; $E_BRANCH = E ($C_DIR -replace '^1;','')
   }
 }
+
+# The worktree badge exists to say "this is a linked worktree" — a path alone
+# can't, since a worktree parked next to its project looks like any other
+# directory. Its *name*, though, is already in the path segment, and repeating
+# it is noise. So keep the glyph and drop the name whenever the name is on the
+# line already (always, under CCLINE_DIR=full).
+$wt_label = $git_worktree
+if ($git_worktree -and $dir.Contains($git_worktree)) { $wt_label = '' }
+# ASCII renders the glyph as the prefix "wt:", which reads as a dropped field
+# with nothing after it. No name, no colon.
+$wt_glyph = if ($wt_label) { $G_WT } else { $G_WT.TrimEnd(':') }
 
 # ------------------------------------------------------------------ helpers --
 function Fmt-K($n) {
@@ -319,22 +345,12 @@ function Pr-Color {
 function Pace-E($pj) { if ($pj -ge 100) { $E_RED } else { $E_ORANGE } }
 function Seg-Dir {
   $s = "$E_DIR$dir$NC"
-  if ($git_branch) { $s += "$SEP$E_DIM$git_branch$NC"; if ($git_dirty) { $s += " $E_ORANGE$G_DOT$NC" } }
-  if ($git_worktree) { $s += " $E_DIM$G_WT$git_worktree$NC" }
+  if ($git_branch) { $s += "$SEP$E_BRANCH$git_branch$NC"; if ($git_dirty) { $s += " $E_ORANGE$G_DOT$NC" } }
+  if ($git_worktree) { $s += " $E_DIM$wt_glyph$wt_label$NC" }
   if ($PR_ON -and $pr_num) {
     $s += " $E_DIM#$pr_num$NC"
     $m = Pr-Mark
     if ($m) { $s += "$(Pr-Color)$m$NC" }
-  }
-  return $s
-}
-function Seg-Cost {                        # -> '' when nothing spent yet
-  if (-not $COST_ON) { return '' }
-  if ($cost_cents -eq 0 -and $lines_add -eq 0 -and $lines_del -eq 0) { return '' }
-  $s = "$E_DIM`$$([int][math]::Floor($cost_cents / 100)).$('{0:d2}' -f ($cost_cents % 100))$NC"
-  if ($lines_add -gt 0 -or $lines_del -gt 0) {
-    # labelled: these are the lines *this session* edited, not the working tree
-    $s += " ${E_DIM}edits $E_GREEN+$lines_add$NC$E_DIM/$NC$E_RED-$lines_del$NC"
   }
   return $s
 }
@@ -368,15 +384,13 @@ function Render-Flat($bars) {
   if ($five_show)  { $segs += (Seg-Limit '5h' $five  $five_reset  $bars $five_stale  $W_5H) }
   if ($seven_show) { $segs += (Seg-Limit '7d' $seven $seven_reset $bars $seven_stale $W_7D) }
   $segs += (Seg-Ctx $bars)
-  $c = Seg-Cost
-  if ($c) { $segs += $c }
   return ($segs -join $SEP)
 }
 function Render-Powerline {
   $segs = @()
   $t = $dir
   if ($git_branch) { $t = "$dir $G_SEP $git_branch"; if ($git_dirty) { $t = "$t $G_DOT" } }
-  if ($git_worktree) { $t = "$t $G_WT$git_worktree" }
+  if ($git_worktree) { $t = "$t $wt_glyph$wt_label" }
   if ($PR_ON -and $pr_num) { $t = "$t #$pr_num$(Pr-Mark)" }
   $segs += @{ bg=$B_DIR; txt=$t }
   if ($model) { $t = $model; if ($effort) { $t = "$model $G_BOLT$effort" }; $segs += @{ bg=$B_MODEL; txt=$t } }
@@ -396,11 +410,6 @@ function Render-Powerline {
   }
   $t = "ctx $ctx%"; if ($ctx_tok -and $ctx_max -and ([int64]$ctx_max -gt 0)) { $t = "$t $(Fmt-K $ctx_tok)/$(Fmt-K $ctx_max)" }
   $segs += @{ bg=(Pct-Bg $ctx); txt=$t }
-  if ($COST_ON -and ($cost_cents -gt 0 -or $lines_add -gt 0 -or $lines_del -gt 0)) {
-    $t = "`$$([int][math]::Floor($cost_cents / 100)).$('{0:d2}' -f ($cost_cents % 100))"
-    if ($lines_add -gt 0 -or $lines_del -gt 0) { $t = "$t edits +$lines_add/-$lines_del" }
-    $segs += @{ bg=$B_COST; txt=$t }
-  }
 
   $out = ''; $prevAf = ''
   for ($i = 0; $i -lt $segs.Count; $i++) {

@@ -12,9 +12,17 @@ CCLINE_COLOR=auto
 # auto uses ASCII on legacy Windows console, Unicode elsewhere.
 CCLINE_ASCII=auto
 
+# Directory segment: full | name
+# full is the whole path with $HOME folded to ~ — the only form that says which
+# project a worktree belongs to, since Claude Code parks worktrees at
+# <project>/.claude/worktrees/<name> and the basename is just the worktree.
+# name shows the basename alone.
+CCLINE_DIR=full
+
 # Git worktree segment: auto | 0
-# auto shows "⑂name" only when the cwd is a linked worktree (handy when each
-# terminal is a different worktree); 0 hides it.
+# auto marks a linked worktree with "⑂" (handy when each terminal is a different
+# worktree); 0 hides it. The name follows the glyph only when it isn't already
+# in the directory segment — i.e. only under CCLINE_DIR=name.
 CCLINE_WORKTREE=auto
 
 # Tint the directory segment per worktree: auto | 0
@@ -34,9 +42,6 @@ CCLINE_PACE_WARN=90
 # has no PR.
 CCLINE_PR=auto
 
-# Session cost + diff ("$1.24 +128/-34"): auto | 0.
-CCLINE_COST=auto
-
 # Percentage thresholds that drive the green -> yellow -> orange -> red colour.
 CCLINE_WARN=50
 CCLINE_HIGH=75
@@ -47,5 +52,6 @@ CCLINE_CRIT=90
 #   "statusLine": { "type": "command", "command": "...", "refreshInterval": 10 }
 #
 # Claude Code re-runs the command on conversation events; refreshInterval adds a
-# timer (seconds, min 1) so the reset countdowns keep ticking and the git segment
-# notices branch changes while the session is idle. The installer writes 10.
+# timer (seconds, min 1) so a window that resets while you are idle stops showing
+# a percentage we know to be wrong, the pace projection keeps moving, and the git
+# segment notices branch changes. The installer writes 10.

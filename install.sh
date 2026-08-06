@@ -72,9 +72,9 @@ fi
 
 # 4) point settings.json at ccline (with backup) -----------------------------
 # refreshInterval re-runs the command every N seconds on top of Claude Code's
-# event-driven updates. Without it the reset countdowns freeze and git state
-# goes stale whenever the session sits idle. 10s is plenty for minute-grained
-# countdowns; ccline renders in ~20ms so the cost is negligible.
+# event-driven updates. Without it a window that resets mid-idle keeps showing
+# a percentage we know to be wrong, the pace projection stops moving, and git
+# state goes stale. 10s is plenty for either; the render is a few git calls.
 CMD="bash $DEST"
 REFRESH="${CCLINE_REFRESH:-10}"
 # Back up only the *pre-ccline* settings: re-running the installer must not

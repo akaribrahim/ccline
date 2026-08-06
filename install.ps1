@@ -64,8 +64,9 @@ if (Test-Path $settings) {
   $obj = [pscustomobject]@{}
 }
 # refreshInterval re-runs the command every N seconds on top of Claude Code's
-# event-driven updates. Without it the reset countdowns freeze and git state
-# goes stale whenever the session sits idle.
+# event-driven updates. Without it a window that resets mid-idle keeps showing
+# a percentage we know to be wrong, the pace projection stops moving, and git
+# state goes stale.
 $refresh = if ($env:CCLINE_REFRESH) { [int]$env:CCLINE_REFRESH } else { 10 }
 $sl = [pscustomobject]@{ type = 'command'; command = $cmd; refreshInterval = $refresh }
 if ($obj.PSObject.Properties.Name -contains 'statusLine') { $obj.statusLine = $sl }

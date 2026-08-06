@@ -7,14 +7,15 @@
 #
 # Claude Code re-runs this on conversation events, and — when statusLine.
 # refreshInterval is set in settings.json — every N seconds as well. It is
-# therefore written to be fork-cheap: one jq call, one git call, no subshells
-# in the render path. Helpers return values in globals rather than via $(...),
-# which would fork.
+# therefore written to be fork-cheap: one jq call, two git calls (three inside
+# a worktree, for the tint), no subshells in the render path. Helpers return
+# values in globals rather than via $(...), which would fork.
 #
 # Config: env vars override ~/.claude/ccline.conf (KEY=value lines).
 #   CCLINE_STYLE   plain | bars | powerline      (default: plain)
 #   CCLINE_COLOR   auto | truecolor | 256 | 16    (default: auto)
 #   CCLINE_ASCII   auto | 1 | 0                   (default: auto)
+#   CCLINE_DIR     full | name                    (default: full — path or basename)
 #   CCLINE_WARN/HIGH/CRIT   percentage thresholds (default: 50/75/90)
 #
 # Requires: jq
@@ -33,7 +34,7 @@ trim() {                                   # -> _R  (no fork)
 
 # One pass over the conf file; last assignment of a key wins.
 CF_STYLE=''; CF_COLOR=''; CF_ASCII=''; CF_WARN=''; CF_HIGH=''; CF_CRIT=''; CF_WT=''
-CF_PACE=''; CF_PACEWARN=''; CF_COST=''; CF_PR=''; CF_WTCOLOR=''
+CF_PACE=''; CF_PACEWARN=''; CF_PR=''; CF_WTCOLOR=''; CF_DIR=''
 if [ -f "$CONF" ]; then
   while IFS= read -r _l || [ -n "$_l" ]; do
     case $_l in ''|'#'*) continue ;; *=*) ;; *) continue ;; esac
@@ -49,9 +50,9 @@ if [ -f "$CONF" ]; then
       CCLINE_CRIT)      CF_CRIT=$_v ;;
       CCLINE_WORKTREE)  CF_WT=$_v ;;
       CCLINE_WT_COLOR)  CF_WTCOLOR=$_v ;;
+      CCLINE_DIR)       CF_DIR=$_v ;;
       CCLINE_PACE)      CF_PACE=$_v ;;
       CCLINE_PACE_WARN) CF_PACEWARN=$_v ;;
-      CCLINE_COST)      CF_COST=$_v ;;
       CCLINE_PR)        CF_PR=$_v ;;
     esac
   done < "$CONF"
@@ -63,15 +64,14 @@ WARN="${CCLINE_WARN:-${CF_WARN:-50}}"
 HIGH="${CCLINE_HIGH:-${CF_HIGH:-75}}"
 CRIT="${CCLINE_CRIT:-${CF_CRIT:-90}}"
 WORKTREE="${CCLINE_WORKTREE:-${CF_WT:-auto}}"
+DIRMODE="${CCLINE_DIR:-${CF_DIR:-full}}"
 PACE="${CCLINE_PACE:-${CF_PACE:-auto}}"
 PACE_WARN="${CCLINE_PACE_WARN:-${CF_PACEWARN:-90}}"
-COST="${CCLINE_COST:-${CF_COST:-auto}}"
 PR="${CCLINE_PR:-${CF_PR:-auto}}"
 off() { case "$1" in 0|false|no|off) return 0 ;; *) return 1 ;; esac; }
 WT_COLOR="${CCLINE_WT_COLOR:-${CF_WTCOLOR:-auto}}"
 off "$WORKTREE" && WT_ON=0 || WT_ON=1
 off "$PACE"     && PACE_ON=0 || PACE_ON=1
-off "$COST"     && COST_ON=0 || COST_ON=1
 off "$PR"       && PR_ON=0   || PR_ON=1
 off "$WT_COLOR" && WTC_ON=0  || WTC_ON=1
 
@@ -109,7 +109,7 @@ if [ "$DEPTH" = truecolor ]; then
   C_ORANGE='38;2;230;140;40'; C_RED='38;2;235;77;75'
   B_DIR='48;2;38;78;84'; B_MODEL='48;2;58;50;82'; B_GREEN='48;2;40;72;40'
   B_YELLOW='48;2;82;74;26'; B_ORANGE='48;2;88;54;18'; B_RED='48;2;88;32;32'
-  B_STALE='48;2;58;58;58'; B_COST='48;2;48;48;56'; FG_BAR='38;2;235;235;235'
+  B_STALE='48;2;58;58;58'; FG_BAR='38;2;235;235;235'
   WC0_F='1;38;2;120;200;120'; WC0_B='48;2;40;72;40'      # worktree tints
   WC1_F='1;38;2;185;150;235'; WC1_B='48;2;58;46;86'
   WC2_F='1;38;2;225;170;80';  WC2_B='48;2;86;62;22'
@@ -120,7 +120,7 @@ elif [ "$DEPTH" = 256 ]; then
   C_DIR='1;38;5;80'; C_DIM='38;5;244'; C_MODEL='38;5;141'; C_EFFORT='38;5;179'
   C_GREEN='38;5;114'; C_YELLOW='38;5;185'; C_ORANGE='38;5;208'; C_RED='38;5;203'
   B_DIR='48;5;23'; B_MODEL='48;5;60'; B_GREEN='48;5;22'; B_YELLOW='48;5;58'
-  B_ORANGE='48;5;94'; B_RED='48;5;52'; B_STALE='48;5;238'; B_COST='48;5;236'; FG_BAR='38;5;255'
+  B_ORANGE='48;5;94'; B_RED='48;5;52'; B_STALE='48;5;238'; FG_BAR='38;5;255'
   WC0_F='1;38;5;114'; WC0_B='48;5;22'                    # worktree tints
   WC1_F='1;38;5;141'; WC1_B='48;5;60'
   WC2_F='1;38;5;179'; WC2_B='48;5;94'
@@ -131,7 +131,7 @@ else
   C_DIR='1;36'; C_DIM='90'; C_MODEL='35'; C_EFFORT='33'
   C_GREEN='32'; C_YELLOW='33'; C_ORANGE='33'; C_RED='31'
   B_DIR='44'; B_MODEL='45'; B_GREEN='42'; B_YELLOW='43'; B_ORANGE='43'; B_RED='41'
-  B_STALE='100'; B_COST='100'; FG_BAR='97'
+  B_STALE='100'; FG_BAR='97'
   WC0_F='1;32'; WC0_B='42'                               # worktree tints
   WC1_F='1;35'; WC1_B='45'
   WC2_F='1;33'; WC2_B='43'
@@ -142,7 +142,13 @@ fi
 
 ESC=$(printf '\033')
 R="$ESC[0m"
-E_DIR="$ESC[${C_DIR}m";     E_DIM="$ESC[${C_DIM}m"
+# The branch takes the directory's colour minus the bold — the two read as one
+# unit, and the branch never sits in the dim grey reserved for numbers you
+# glance past. In a worktree C_DIR is that worktree's tint, so the branch is
+# tinted with it; dir_e is re-run once the tint is known.
+dir_e() { E_DIR="$ESC[${C_DIR}m"; E_BRANCH="$ESC[${C_DIR#1;}m"; }
+dir_e
+E_DIM="$ESC[${C_DIM}m"
 E_MODEL="$ESC[${C_MODEL}m"; E_EFFORT="$ESC[${C_EFFORT}m"
 E_GREEN="$ESC[${C_GREEN}m"; E_YELLOW="$ESC[${C_YELLOW}m"
 E_ORANGE="$ESC[${C_ORANGE}m"; E_RED="$ESC[${C_RED}m"
@@ -183,7 +189,7 @@ epoch_fmt "$NOW" %a; NOW_WDAY=$_EF
 _oldifs=$IFS
 IFS=$(printf '\037')
 read -r cwd model effort five_hr five_reset seven_day seven_reset ctx ctx_tok ctx_max wt has_ws \
-        cost_cents lines_add lines_del pr_num pr_state <<EOF
+        pr_num pr_state <<EOF
 $(printf '%s' "$input" | jq -r '[
   (.cwd // ""),
   (.model.display_name // ""),
@@ -197,16 +203,26 @@ $(printf '%s' "$input" | jq -r '[
   (.context_window.context_window_size // ""),
   (.workspace.git_worktree // ""),
   (if .workspace then "1" else "0" end),
-  ((.cost.total_cost_usd // 0) * 100 | round),
-  (.cost.total_lines_added // 0),
-  (.cost.total_lines_removed // 0),
   (.pr.number // ""),
   (.pr.review_state // "" | ascii_downcase)
 ] | map(tostring) | join("\u001f")' 2>/dev/null)
 EOF
 IFS=$_oldifs
 
-dir=${cwd##*/}
+# The directory segment is the whole path, $HOME folded to ~. A basename is
+# ambiguous the moment worktrees are in play: Claude Code puts them under
+# <project>/.claude/worktrees/<name>, so the basename is the worktree's name and
+# the project's name is nowhere on the line — with several sessions open across
+# several projects, every tab reads alike. The path says both, and says where on
+# disk to go. CCLINE_DIR=name restores the basename.
+case $DIRMODE in
+  name) dir=${cwd##*/} ;;
+  *)    dir=$cwd
+        case $dir in
+          "$HOME")   dir='~' ;;
+          "$HOME"/*) dir="~${dir#"$HOME"}" ;;
+        esac ;;
+esac
 [ -z "$dir" ] && dir="~"
 
 # "Sonnet 4.5 (1M context)" -> "Sonnet 4.5 1M"
@@ -245,13 +261,9 @@ expired "$seven_reset"; seven_stale=$_EX
 #
 # But rate_limits never arrive at all on API-key accounts, and a dash that never
 # resolves is its own lie. The question "does this account have limits?" can't be
-# answered from one payload — a resumed session already has cost and token counts
+# answered from one payload — a resumed session already carries its token counts
 # while the limits are still missing, so those are not the signal. What does
 # answer it: have we *ever* seen limits here? Learn that once, remember it.
-intval "$cost_cents"; cost_cents=$_IV
-intval "$lines_add";  lines_add=$_IV
-intval "$lines_del";  lines_del=$_IV
-
 SEEN="$CLAUDE_DIR/.ccline-limits-seen"
 if [ -n "$five_hr" ] || [ -n "$seven_day" ]; then
   limits_known=1
@@ -370,9 +382,21 @@ if [ "$WTC_ON" = 1 ] && [ -n "$git_worktree" ]; then
       4) C_DIR=$WC4_F; B_DIR=$WC4_B ;;
       5) C_DIR=$WC5_F; B_DIR=$WC5_B ;;
     esac
-    E_DIR="$ESC[${C_DIR}m"
+    dir_e
   fi
 fi
+
+# The worktree badge exists to say "this is a linked worktree" — a path alone
+# can't, since a worktree parked next to its project looks like any other
+# directory. Its *name*, though, is already in the path segment, and repeating
+# it is noise. So keep the glyph and drop the name whenever the name is
+# on the line already (always, under CCLINE_DIR=full).
+wt_label=$git_worktree
+[ -n "$git_worktree" ] && case $dir in *"$git_worktree"*) wt_label='' ;; esac
+# ASCII renders the glyph as the prefix "wt:", which reads as a dropped field
+# with nothing after it. No name, no colon.
+wt_glyph=$G_WT
+[ -z "$wt_label" ] && wt_glyph=${G_WT%:}
 
 # ------------------------------------------------------------------ helpers --
 fmt_k() {                                  # 47210 -> _K=47k, 1000000 -> _K=1.0M
@@ -441,10 +465,10 @@ pace_e() {                                 # projected% -> _PE (its color)
 seg_dir() {                                # -> _SEG
   _SEG="$E_DIR$dir$R"
   if [ -n "$git_branch" ]; then
-    _SEG="$_SEG$SEP$E_DIM$git_branch$R"
+    _SEG="$_SEG$SEP$E_BRANCH$git_branch$R"
     [ "$git_dirty" = 1 ] && _SEG="$_SEG $E_ORANGE$G_DOT$R"
   fi
-  [ -n "$git_worktree" ] && _SEG="$_SEG $E_DIM$G_WT$git_worktree$R"
+  [ -n "$git_worktree" ] && _SEG="$_SEG $E_DIM$wt_glyph$wt_label$R"
   if [ "$PR_ON" = 1 ] && [ -n "$pr_num" ]; then
     pr_mark
     _SEG="$_SEG $E_DIM#$pr_num$R"
@@ -473,17 +497,6 @@ seg_limit_bar() {                          # label pct reset stale window -> _SE
   [ -n "$_P" ] && { pace_e "$_P"; _SEG="$_SEG $_PE$G_PACE$_P%$R"; }
   fmt_reset "$3"; [ -n "$_RS" ] && _SEG="$_SEG $E_DIM$G_RST$_RS$R"
 }
-seg_cost() {                               # -> _SEG ('' when nothing spent yet)
-  _SEG=''
-  [ "$COST_ON" = 1 ] || return
-  [ "$cost_cents" -eq 0 ] && [ "$lines_add" -eq 0 ] && [ "$lines_del" -eq 0 ] && return
-  _f=$(( cost_cents % 100 )); [ "$_f" -lt 10 ] && _f="0$_f"
-  _SEG="$E_DIM\$$(( cost_cents / 100 )).$_f$R"
-  if [ "$lines_add" -gt 0 ] || [ "$lines_del" -gt 0 ]; then
-    # labelled: these are the lines *this session* edited, not the working tree
-    _SEG="$_SEG ${E_DIM}edits $E_GREEN+$lines_add$R$E_DIM/$R$E_RED-$lines_del$R"
-  fi
-}
 seg_ctx() {                                # -> _SEG
   pct_e "$ctx"
   _SEG="${E_DIM}ctx $_E$ctx%$R"
@@ -507,7 +520,6 @@ render_plain() {
   [ "$five_show" = 1 ] && { seg_limit 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"; add "$_SEG"; }
   [ "$seven_show" = 1 ] && { seg_limit 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"; add "$_SEG"; }
   seg_ctx; add "$_SEG"
-  seg_cost; [ -n "$_SEG" ] && add "$_SEG"
   printf '%s' "$L"
 }
 render_bars() {
@@ -516,7 +528,6 @@ render_bars() {
   [ "$five_show" = 1 ] && { seg_limit_bar 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"; add "$_SEG"; }
   [ "$seven_show" = 1 ] && { seg_limit_bar 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"; add "$_SEG"; }
   seg_ctx_bar; add "$_SEG"
-  seg_cost; [ -n "$_SEG" ] && add "$_SEG"
   printf '%s' "$L"
 }
 
@@ -551,7 +562,7 @@ pl_limit() {                               # label pct reset stale window
 render_powerline() {
   _t="$dir"
   [ -n "$git_branch" ] && { _t="$dir $G_SEP $git_branch"; [ "$git_dirty" = 1 ] && _t="$_t $G_DOT"; }
-  [ -n "$git_worktree" ] && _t="$_t $G_WT$git_worktree"
+  [ -n "$git_worktree" ] && _t="$_t $wt_glyph$wt_label"
   if [ "$PR_ON" = 1 ] && [ -n "$pr_num" ]; then
     pr_mark; _t="$_t #$pr_num"; [ -n "$_PM" ] && _t="$_t$_PM"
   fi
@@ -567,16 +578,6 @@ render_powerline() {
     fmt_k "$ctx_tok"; _c=$_K; fmt_k "$ctx_max"; _t="$_t $_c/$_K"
   fi
   pct_bg "$ctx"; pl_add "$FG_BAR" "$_BG" "$_t"
-  if [ "$COST_ON" = 1 ]; then
-    if [ "$cost_cents" -gt 0 ] || [ "$lines_add" -gt 0 ] || [ "$lines_del" -gt 0 ]; then
-      _f=$(( cost_cents % 100 )); [ "$_f" -lt 10 ] && _f="0$_f"
-      _t="\$$(( cost_cents / 100 )).$_f"
-      if [ "$lines_add" -gt 0 ] || [ "$lines_del" -gt 0 ]; then
-        _t="$_t edits +$lines_add/-$lines_del"
-      fi
-      pl_add "$FG_BAR" "$B_COST" "$_t"
-    fi
-  fi
   PL="$PL$R$ESC[${PREV_AF}m$PL_ARR$R"
   printf '%s' "$PL"
 }
