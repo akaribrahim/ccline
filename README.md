@@ -8,13 +8,6 @@ It adapts to whatever your terminal supports: 24-bit color where available, 256-
 ~/dev/my-project · main · Opus 4.8 1M ⚡high · 5h 4% ↺18:42 · 7d 12% ↺Sun 09:15 · ctx 5% 47k/1M
 ```
 
-Or on two rows (`CCLINE_LAYOUT=two`, here with `CCLINE_STYLE=bars`) — where you are on top, the meters below:
-
-```
-~/dev/my-project · main ●  auth-fix 📱               Opus 4.8 1M · high
-5h ▕█░░░░░▏ 4% ↺18:42 · 7d ▕█░░░░░▏ 12% ↺Sun 09:15 · ctx ▕░░░░░░▏ 5% 47k/1M
-```
-
 ## What each segment means
 
 | Segment | Example | Source |
@@ -94,15 +87,9 @@ Give each conversation a tmux session of its own and that session's name is the 
 
 Turn either off with `CCLINE_NAME=0` / `CCLINE_RC=0`.
 
-## Layout
-
-`CCLINE_LAYOUT=one` (default) keeps everything on one row. `CCLINE_LAYOUT=two` splits it: path, branch, session and model on top; limits and context below — room for the gauges without a line that runs off the edge. The model is pushed right so it ends under the second row's last column, and the two rows read as one block.
-
-Two rows also **fit the terminal**. Claude Code puts the width in `COLUMNS`; when a row would wrap, it sheds detail least-read first — gauges, then token counts, then reset clocks, then the pace marker on the meters row; the effort, then the model, and a deep path shortens to its basename on the top row. The percentages always stay. (Needs `bash` — which the installer's `bash ~/.claude/ccline.sh` is — and a `C.UTF-8` locale, which macOS and current Linux ship; without either the rows render untrimmed.)
-
 ## Styles
 
-Pick with `CCLINE_STYLE` (config file or env var). Each works with either layout:
+Pick with `CCLINE_STYLE` (config file or env var):
 
 **plain** — clean, separator-joined
 ```
@@ -135,7 +122,7 @@ Defaults to the `plain` style; change it later in `~/.claude/ccline.conf`, or in
 irm https://raw.githubusercontent.com/akaribrahim/ccline/main/install.ps1 | iex
 ```
 
-The PowerShell port doesn't have the two-row layout, the session name or the Remote Control mark yet.
+The PowerShell port doesn't have the session name or the Remote Control mark yet.
 
 ### From a clone (works while the repo is private)
 
@@ -197,7 +184,6 @@ Create or edit `~/.claude/ccline.conf` (or set the matching environment variable
 | Key | Values | Default | Meaning |
 |---|---|---|---|
 | `CCLINE_STYLE` | `plain` `bars` `powerline` | `plain` | visual style |
-| `CCLINE_LAYOUT` | `one` `two` | `one` | one row, or two that fit the terminal ([Layout](#layout)) |
 | `CCLINE_COLOR` | `auto` `truecolor` `256` `16` | `auto` | force color depth |
 | `CCLINE_ASCII` | `auto` `1` `0` | `auto` | force ASCII / Unicode glyphs |
 | `CCLINE_DIR` | `full` `name` | `full` | whole path (`~/dev/proj`) or basename (`proj`) ([why](#where-am-i)) |
@@ -217,7 +203,7 @@ See [`ccline.conf.example`](ccline.conf.example).
 
 ## How it works
 
-Claude Code feeds the configured `statusLine.command` a JSON blob on stdin (`cwd`, `session_id`, `session_name`, `model`, `effort.level`, `rate_limits.{five_hour,seven_day}.{used_percentage,resets_at}`, `context_window.*`, `workspace.git_worktree`, `pr.{number,review_state}`). ccline parses it (`jq` on POSIX, `ConvertFrom-Json` on Windows), formats one line (or two), and writes it to stdout.
+Claude Code feeds the configured `statusLine.command` a JSON blob on stdin (`cwd`, `session_id`, `session_name`, `model`, `effort.level`, `rate_limits.{five_hour,seven_day}.{used_percentage,resets_at}`, `context_window.*`, `workspace.git_worktree`, `pr.{number,review_state}`). ccline parses it (`jq` on POSIX, `ConvertFrom-Json` on Windows), formats one line, and writes it to stdout.
 
 It is built to be cheap to re-run: **one** `jq` call, **two** `git` calls (`status --porcelain=v2 --branch -uno` for branch + dirtiness in one shot, `rev-parse` to tell a linked worktree from the main tree), and no subshells in the render path — tens of milliseconds. A third `git` call, `worktree list`, runs only inside a worktree, to pick the tint. The Remote Control mark reads one small file with the shell's own `read`; a `ps` runs only when ccline's parent isn't the Claude Code process itself (a shell in between). The cost is dominated by `git status`, so it scales with the tree, not with ccline: `-uno` is there because skipping the untracked walk is what keeps a large repo cheap. That matters, because Claude Code re-runs the command often and *slow scripts block the status line from updating*.
 

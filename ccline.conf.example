@@ -4,12 +4,6 @@
 # Visual style: plain | bars | powerline
 CCLINE_STYLE=plain
 
-# Layout: one | two
-# two puts path, branch, session and model on the first row and the limits and
-# context on the second, and fits both rows to the terminal width by shedding
-# the least-read details first (gauges, token counts, reset clocks, pace).
-CCLINE_LAYOUT=one
-
 # Color depth: auto | truecolor | 256 | 16
 # auto detects the terminal (Terminal.app -> 256, iTerm/WT/VSCode -> truecolor).
 CCLINE_COLOR=auto

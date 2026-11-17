@@ -16,7 +16,6 @@
 #   CCLINE_COLOR   auto | truecolor | 256 | 16    (default: auto)
 #   CCLINE_ASCII   auto | 1 | 0                   (default: auto)
 #   CCLINE_DIR     full | name                    (default: full — path or basename)
-#   CCLINE_LAYOUT  one | two                      (default: one — two moves the meters to row 2)
 #   CCLINE_NAME    auto | tmux | 0                (session name; CCLINE_NAME_TRIM drops prefixes)
 #   CCLINE_RC      auto | 0                       (📱 while Remote Control is on)
 #   CCLINE_WARN/HIGH/CRIT   percentage thresholds (default: 50/75/90)
@@ -38,7 +37,7 @@ trim() {                                   # -> _R  (no fork)
 # One pass over the conf file; last assignment of a key wins.
 CF_STYLE=''; CF_COLOR=''; CF_ASCII=''; CF_WARN=''; CF_HIGH=''; CF_CRIT=''; CF_WT=''
 CF_PACE=''; CF_PACEWARN=''; CF_PR=''; CF_WTCOLOR=''; CF_DIR=''
-CF_LAYOUT=''; CF_NAME=''; CF_NAMETRIM=''; CF_RC=''
+CF_NAME=''; CF_NAMETRIM=''; CF_RC=''
 # One machine can run several Claude Code config dirs (CLAUDE_CONFIG_DIR, one
 # per account); they share ~/.claude/ccline.conf unless they carry their own.
 if [ ! -f "$CONF" ] && [ -z "${CCLINE_CONFIG:-}" ] && [ -f "$HOME/.claude/ccline.conf" ]; then
@@ -63,7 +62,6 @@ if [ -f "$CONF" ]; then
       CCLINE_PACE)      CF_PACE=$_v ;;
       CCLINE_PACE_WARN) CF_PACEWARN=$_v ;;
       CCLINE_PR)        CF_PR=$_v ;;
-      CCLINE_LAYOUT)    CF_LAYOUT=$_v ;;
       CCLINE_NAME)      CF_NAME=$_v ;;
       CCLINE_NAME_TRIM) CF_NAMETRIM=$_v ;;
       CCLINE_RC)        CF_RC=$_v ;;
@@ -87,7 +85,6 @@ off "$WORKTREE" && WT_ON=0 || WT_ON=1
 off "$PACE"     && PACE_ON=0 || PACE_ON=1
 off "$PR"       && PR_ON=0   || PR_ON=1
 off "$WT_COLOR" && WTC_ON=0  || WTC_ON=1
-LAYOUT="${CCLINE_LAYOUT:-${CF_LAYOUT:-one}}"
 NAME="${CCLINE_NAME:-${CF_NAME:-auto}}"
 NAME_TRIM="${CCLINE_NAME_TRIM:-${CF_NAMETRIM:-}}"
 RC="${CCLINE_RC:-${CF_RC:-auto}}"
@@ -178,53 +175,26 @@ E_NAME="$ESC[${C_NAME}m"
 if [ "$ASCII" = 1 ]; then
   G_SEP='|'; G_RST='~'; G_BOLT='*'; G_DOT='*'; G_WT='wt:'
   G_BARF='#'; G_BARE='-'; G_BL='['; G_BR=']'; PL_ARR=''
-  G_PACE='>'; G_OK='+'; G_NOK='x'; G_RC='(rc)'; G_RCW=0; G_ELL='~'
+  G_PACE='>'; G_OK='+'; G_NOK='x'; G_RC='(rc)'; G_ELL='~'
 else
   G_SEP='·'; G_RST='↺'; G_BOLT='⚡'; G_DOT='●'; G_WT='⑂'
   G_BARF='█'; G_BARE='░'; G_BL='▕'; G_BR='▏'; PL_ARR=$(printf '\356\202\260')
-  G_PACE='→'; G_OK='✓'; G_NOK='✗'; G_RC='📱'; G_RCW=1; G_ELL='…'
+  G_PACE='→'; G_OK='✓'; G_NOK='✗'; G_RC='📱'; G_ELL='…'
 fi
-# G_RCW: columns G_RC takes beyond its character count (an emoji is two wide).
 
-# -------------------------------------------------------------------- width --
-# Claude Code puts the terminal width in COLUMNS before running us, so a row
-# that would wrap can shed its least useful parts instead. That takes a count
-# of characters, not bytes: bash gives one under a UTF-8 locale — and a session
-# started over ssh or inside tmux often has no locale at all. So borrow
-# C.UTF-8 just for the count and hand the caller's locale back (date's weekday
-# names come from it). Not bash, or no UTF-8 locale to borrow: MB=0, and rows
-# are neither trimmed nor aligned — everything else renders as before.
+# ------------------------------------------------------------------- locale --
+# A long session title is cut by characters, not bytes: a byte cut can split a
+# multi-byte letter. bash counts characters under a UTF-8 locale — and a
+# session started over ssh or inside tmux often has no locale at all. So
+# borrow C.UTF-8 just for the count and hand the caller's locale back (date's
+# weekday names come from it). Not bash, or no UTF-8 locale to borrow: MB=0,
+# and a long name is left whole.
 mb_on()  { _lcs=${LC_ALL+1}; _lco=${LC_ALL:-}; { LC_ALL=C.UTF-8; } 2>/dev/null; }
 mb_off() { if [ -n "$_lcs" ]; then LC_ALL=$_lco; else unset LC_ALL; fi; }
 MB=0
 if [ -n "${BASH_VERSION:-}" ]; then
   _probe='·'; mb_on; [ "${#_probe}" = 1 ] && MB=1; mb_off
 fi
-strip() {                                  # drop SGR escapes -> _S
-  _in=$1; _S=''
-  while :; do
-    case $_in in
-      *"$ESC["*) _S="$_S${_in%%"$ESC["*}"; _in=${_in#*"$ESC["}; _in=${_in#*m} ;;
-      *) _S="$_S$_in"; return ;;
-    esac
-  done
-}
-vwidth() {                                 # visible columns -> _VW (MB=1 only)
-  strip "$1"
-  mb_on; _VW=${#_S}; mb_off
-  case $_S in *"$G_RC"*) _VW=$(( _VW + G_RCW )) ;; esac
-}
-# Leave a few columns: Claude Code indents the status line, and a row that
-# lands exactly on the edge wraps in some terminals.
-AVAIL=0                                    # 0 = width unknown: never trim
-if [ "$MB" = 1 ]; then
-  case ${COLUMNS:-} in ''|*[!0-9]*) ;; *) AVAIL=$(( COLUMNS - 4 )) ;; esac
-fi
-fits() { [ "$AVAIL" -le 0 ] || [ "$1" -le "$AVAIL" ]; }
-pad() {                                    # n -> _PAD (n spaces)
-  _PAD=''; _i=0
-  while [ "$_i" -lt "$1" ]; do _PAD="$_PAD "; _i=$((_i+1)); done
-}
 
 # --------------------------------------------------------------------- now --
 # bash 5 / zsh expose EPOCHSECONDS for free; older shells pay one fork.
@@ -555,9 +525,8 @@ bar() {                                    # bar PCT WIDTH -> _BAR
 }
 
 # ---------------------------------------------------------------- renderers --
-# Everything that forks (date, for the reset clocks) is worked out once, here.
-# The segment builders below only assemble strings, so the two-row layout can
-# rebuild a row as many times as fitting it takes, for free.
+# Everything that forks (date, for the reset clocks) is worked out once, here;
+# the segment builders below only assemble strings.
 five_p=''; five_rs=''; seven_p=''; seven_rs=''
 if [ "$five_show" = 1 ]; then
   pace "$five_hr" "$five_reset" "$W_5H"; five_p=$_P
@@ -578,10 +547,7 @@ L=""
 add() { if [ -z "$L" ]; then L=$1; else L="$L$SEP$1"; fi; }
 
 [ "$STYLE" = powerline ] && [ "$ASCII" = 1 ] && STYLE=bars   # no arrow glyph in ASCII
-# What the meters carry. The two-row layout switches these off one at a time
-# when its second row would otherwise wrap; the percentages always stay.
-SHOW_BAR=0; [ "$STYLE" = bars ] && SHOW_BAR=1
-SHOW_TOK=1; SHOW_RST=1; SHOW_PACE=1
+SHOW_BAR=0; [ "$STYLE" = bars ] && SHOW_BAR=1   # bars: a gauge on each meter
 
 pr_mark() {                                # -> _PM glyph, _PME its color ('' = no PR)
   _PM=''; _PME=$E_DIM
@@ -622,13 +588,6 @@ seg_model() {                              # one row: "Opus 4.8 ⚡high" -> _SEG
   _SEG="$E_MODEL$model$R"
   [ -n "$effort" ] && _SEG="$_SEG $E_EFFORT$G_BOLT$effort$R"
 }
-seg_model2() {                             # two rows: "Opus 4.8 · high"; $1=0 drops effort
-  _SEG=''
-  [ -z "$model" ] && return
-  _SEG="$E_MODEL$model$R"
-  [ "$1" = 1 ] && [ -n "$effort" ] && _SEG="$_SEG$SEP$E_EFFORT$effort$R"
-  return 0
-}
 seg_limit() {                              # label pct pace reset -> _SEG
   pct_e "$2"
   if [ "$SHOW_BAR" = 1 ]; then
@@ -636,8 +595,8 @@ seg_limit() {                              # label pct pace reset -> _SEG
   else
     _SEG="$E_DIM$1 $_E$2%$R"
   fi
-  if [ "$SHOW_PACE" = 1 ] && [ -n "$3" ]; then pace_e "$3"; _SEG="$_SEG $_PE$G_PACE$3%$R"; fi
-  if [ "$SHOW_RST" = 1 ] && [ -n "$4" ]; then _SEG="$_SEG $E_DIM$G_RST$4$R"; fi
+  if [ -n "$3" ]; then pace_e "$3"; _SEG="$_SEG $_PE$G_PACE$3%$R"; fi
+  if [ -n "$4" ]; then _SEG="$_SEG $E_DIM$G_RST$4$R"; fi
 }
 seg_ctx() {                                # -> _SEG
   pct_e "$ctx"
@@ -646,10 +605,10 @@ seg_ctx() {                                # -> _SEG
   else
     _SEG="${E_DIM}ctx $_E$ctx%$R"
   fi
-  if [ "$SHOW_TOK" = 1 ] && [ -n "$ctx_tt" ]; then _SEG="$_SEG $E_DIM$ctx_tt$R"; fi
+  if [ -n "$ctx_tt" ]; then _SEG="$_SEG $E_DIM$ctx_tt$R"; fi
 }
 
-render_one() {
+render_line() {
   seg_dir; add "$_SEG"
   seg_who; [ -n "$_SEG" ] && add "$_SEG"
   seg_model; [ -n "$_SEG" ] && add "$_SEG"
@@ -659,60 +618,6 @@ render_one() {
   printf '%s' "$L"
 }
 
-# Two rows: where you are and who you're talking to on top, the meters below.
-#   ~/dev/proj · main ●  ibrahim 📱              Opus 4.8 · high
-#   7d ▕█████░▏ 89% →119% ↺Thu 18:00 · ctx ▕█░░░░░▏ 10% 98k/1M
-meters() {                                 # -> _LM (row 2)
-  _LM=''
-  if [ "$five_show" = 1 ]; then seg_limit 5h "$five_hr" "$five_p" "$five_rs"; _LM=$_SEG; fi
-  if [ "$seven_show" = 1 ]; then seg_limit 7d "$seven_day" "$seven_p" "$seven_rs"; _LM="${_LM:+$_LM$SEP}$_SEG"; fi
-  seg_ctx; _LM="${_LM:+$_LM$SEP}$_SEG"
-}
-where() {                                  # -> _LW (row 1, left side)
-  seg_dir; _LW=$_SEG
-  seg_who; [ -n "$_SEG" ] && _LW="$_LW  $_SEG"
-}
-render_two() {
-  meters
-  _w2=0
-  if [ "$MB" = 1 ]; then
-    # Too wide: shed the gauges, then the token counts, then the reset clocks,
-    # then the pace marker — least read first.
-    vwidth "$_LM"
-    for _drop in BAR TOK RST PACE; do
-      fits "$_VW" && break
-      eval "SHOW_$_drop=0"; meters; vwidth "$_LM"
-    done
-    _w2=$_VW
-  fi
-  _l2=$_LM
-
-  where
-  if [ "$MB" = 1 ]; then
-    vwidth "$_LW"
-    if ! fits "$_VW" && [ "$DIRMODE" != name ]; then   # a deep path gives way first
-      dir=${cwd##*/}; [ -z "$dir" ] && dir='~'
-      where; vwidth "$_LW"
-    fi
-    _wl=$_VW
-  fi
-  _l1=$_LW
-  seg_model2 1
-  if [ -n "$_SEG" ]; then
-    if [ "$MB" = 1 ]; then
-      vwidth "$_SEG"
-      if ! fits $(( _wl + 2 + _VW )); then seg_model2 0; vwidth "$_SEG"; fi
-      if fits $(( _wl + 2 + _VW )); then
-        # end the model under row 2's last column, so the rows read as one block
-        _gap=$(( _w2 - _wl - _VW )); [ "$_gap" -lt 2 ] && _gap=2
-        pad "$_gap"; _l1="$_LW$_PAD$_SEG"
-      fi
-    else
-      _l1="$_LW$SEP$_SEG"
-    fi
-  fi
-  printf '%s\n%s' "$_l1" "$_l2"
-}
 
 # powerline: chained bg segments with  transitions
 PL=""; PREV_AF=""
@@ -765,17 +670,8 @@ pl_meters() {
   pct_bg "$ctx"; pl_add "$FG_BAR" "$_BG" "$_t"
 }
 render_powerline() {
-  pl_where
-  if [ "$LAYOUT" = two ]; then
-    pl_end; _l1=$PL; PL=''; PREV_AF=''
-    pl_meters; pl_end
-    printf '%s\n%s' "$_l1" "$PL"
-  else
-    pl_meters; pl_end
-    printf '%s' "$PL"
-  fi
+  pl_where; pl_meters; pl_end
+  printf '%s' "$PL"
 }
 
-if [ "$STYLE" = powerline ]; then render_powerline
-elif [ "$LAYOUT" = two ]; then render_two
-else render_one; fi
+if [ "$STYLE" = powerline ]; then render_powerline; else render_line; fi
