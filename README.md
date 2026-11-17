@@ -86,7 +86,9 @@ The main tree is never tinted, so "no colour" stays a meaningful signal: *you're
 
 ## Which session?
 
-Run a few sessions at once — a tab per project, tmux panes, chats you reach over ssh — and the lines look alike: same model, often the same path. The **session name** tells them apart. It's whatever Claude Code calls the session: `claude --name auth-fix`, `/rename auth-fix`, or the title it generates. A launcher that prefixes its names can have the prefix dropped — `CCLINE_NAME_TRIM="team- chat-"` shows `team-auth-fix` as `auth-fix`. A long generated title is cut at 24 characters.
+Run a few sessions at once — a tab per project, tmux panes, chats you reach over ssh — and the lines look alike: same model, often the same path. The **session name** tells them apart. It's whatever Claude Code calls the session: `claude --name auth-fix`, `/rename auth-fix`, or the title it generates. A long generated title is cut at 24 characters.
+
+Give each conversation a tmux session of its own and that session's name is the handle you already use — the one you attach and switch by. `CCLINE_NAME=tmux` shows it instead (falling back to Claude Code's name outside tmux); the pane is read from the same state file as the Remote Control mark below. A launcher that prefixes its names can have the prefix dropped — `CCLINE_NAME_TRIM="team- chat-"` shows `team-auth-fix` as `auth-fix`.
 
 `📱` means **Remote Control is on**: the session can be picked up from claude.ai or the Claude app. The payload doesn't carry this — its `remote` field means the opposite, a terminal *watching* a session that runs elsewhere — so ccline reads Claude Code's own state file for the session, `~/.claude/sessions/<pid>.json`, which holds a `bridgeSessionId` while Remote Control is on. It's checked on every run, so turning Remote Control on or off mid-session shows up within one `refreshInterval`.
 
@@ -204,7 +206,7 @@ Create or edit `~/.claude/ccline.conf` (or set the matching environment variable
 | `CCLINE_PACE` | `auto` `0` | `auto` | burn-rate projection on the limits ([Pace](#pace)) |
 | `CCLINE_PACE_WARN` | 0–999 | `90` | projected % at which the `→` marker appears |
 | `CCLINE_PR` | `auto` `0` | `auto` | `#42 ✓` pull-request segment |
-| `CCLINE_NAME` | `auto` `0` | `auto` | session name ([Which session?](#which-session)) |
+| `CCLINE_NAME` | `auto` `tmux` `0` | `auto` | session name — Claude Code's, or the tmux session's ([Which session?](#which-session)) |
 | `CCLINE_NAME_TRIM` | prefixes | — | space-separated prefixes to drop from the name |
 | `CCLINE_RC` | `auto` `0` | `auto` | `📱` while Remote Control is on |
 | `CCLINE_WARN` | 0–100 | `50` | yellow threshold |

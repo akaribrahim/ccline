@@ -48,7 +48,10 @@ CCLINE_PACE_WARN=90
 # has no PR.
 CCLINE_PR=auto
 
-# Session name (from --name, /rename, or Claude Code's generated title): auto | 0
+# Session name: auto | tmux | 0
+# auto is Claude Code's name for it (--name, /rename, or the generated title);
+# tmux is the name of the tmux session it runs in, falling back to auto
+# outside tmux — handy when every conversation gets a tmux session of its own.
 # CCLINE_NAME_TRIM drops a launcher's prefix: "team- chat-" shows "team-auth"
 # as "auth". Space-separated; the first one that matches wins.
 CCLINE_NAME=auto

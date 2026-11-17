@@ -17,7 +17,7 @@
 #   CCLINE_ASCII   auto | 1 | 0                   (default: auto)
 #   CCLINE_DIR     full | name                    (default: full — path or basename)
 #   CCLINE_LAYOUT  one | two                      (default: one — two moves the meters to row 2)
-#   CCLINE_NAME    auto | 0                       (session name; CCLINE_NAME_TRIM drops prefixes)
+#   CCLINE_NAME    auto | tmux | 0                (session name; CCLINE_NAME_TRIM drops prefixes)
 #   CCLINE_RC      auto | 0                       (📱 while Remote Control is on)
 #   CCLINE_WARN/HIGH/CRIT   percentage thresholds (default: 50/75/90)
 #
@@ -305,44 +305,64 @@ intval() { _IV=${1%%.*}; case $_IV in ''|*[!0-9]*) _IV=0 ;; esac; }
 intval "$ctx"; ctx=$_IV
 
 # ------------------------------------------------------------------ session --
-# Which conversation is this? With several open — tabs, tmux panes, chats
-# reached over ssh — path and model read alike in all of them; the name
-# doesn't. It comes from --name, /rename, or Claude Code's generated title.
-# CCLINE_NAME_TRIM drops a launcher's prefix ("makira-ibrahim" -> "ibrahim").
-name=''
-if [ "$NAME_ON" = 1 ] && [ -n "$sname" ]; then
-  name=$sname
-  for _p in $NAME_TRIM; do
-    case $name in "$_p"?*) name=${name#"$_p"}; break ;; esac
-  done
-  # A generated title can run long; the row belongs to the numbers. (eval keeps
-  # the bash-only substring away from a POSIX sh parser.)
-  if [ "$MB" = 1 ]; then
-    mb_on; [ "${#name}" -gt 24 ] && eval 'name="${name:0:23}$G_ELL"'; mb_off
-  fi
-fi
-
-# Remote Control — can this session be reached from claude.ai or the phone?
-# The payload doesn't say: its `remote` field means the reverse (this terminal
-# watching a session that runs elsewhere). Claude Code's own per-process state
-# file does: $CLAUDE_DIR/sessions/<pid>.json carries a bridgeSessionId while
-# Remote Control is on. We are that process's child — directly, or through one
-# shell — and the file must name this payload's session, so a recycled pid
-# can't light the mark. Checked on every run, so toggling it mid-session shows
-# up within one refreshInterval.
-rc=0
-rc_file() {                                # pid -> 0 if its state file is ours (-> _SJ)
+# Claude Code's own per-process state file, $CLAUDE_DIR/sessions/<pid>.json,
+# knows two things the payload doesn't: whether Remote Control is on, and which
+# tmux pane the session runs in. We are that process's child — directly, or
+# through one shell — and the file must name this payload's session, so a
+# recycled pid can't answer for it. Read on every run, so Remote Control
+# toggled mid-session shows up within one refreshInterval.
+_SJ=''
+state_file() {                             # pid -> 0 if its state file is ours (-> _SJ)
   _SJ=''
   [ -f "$CLAUDE_DIR/sessions/$1.json" ] || return 1
   IFS= read -r _SJ < "$CLAUDE_DIR/sessions/$1.json"
   case $_SJ in *"\"sessionId\":\"$sid\""*) return 0 ;; esac
   _SJ=''; return 1
 }
-if [ "$RC_ON" = 1 ] && [ -n "$sid" ]; then
-  if ! rc_file "$PPID"; then
+if [ -n "$sid" ] && { [ "$RC_ON" = 1 ] || [ "$NAME" = tmux ]; }; then
+  if ! state_file "$PPID"; then
     _pp=$(ps -o ppid= -p "$PPID" 2>/dev/null); trim "$_pp"
-    case $_R in ''|*[!0-9]*) ;; *) rc_file "$_R" ;; esac
+    case $_R in ''|*[!0-9]*) ;; *) state_file "$_R" ;; esac
   fi
+fi
+
+# Which conversation is this? With several open — tabs, tmux panes, chats
+# reached over ssh — path and model read alike in all of them; the name
+# doesn't. It comes from --name, /rename, or Claude Code's generated title.
+# CCLINE_NAME=tmux names it after the tmux session it runs in instead — the
+# handle you attach and switch by, when each conversation gets a session of
+# its own — and falls back to Claude Code's name outside tmux.
+# CCLINE_NAME_TRIM drops a launcher's prefix ("makira-ibrahim" -> "ibrahim").
+name=''
+if [ "$NAME_ON" = 1 ]; then
+  if [ "$NAME" = tmux ]; then
+    _k='"tmux":"'                          # "tmux":"<session>:@<window>.%<pane>"
+    case $_SJ in *"$_k"*) name=${_SJ#*"$_k"}; name=${name%%\"*}; name=${name%%:*} ;; esac
+    if [ -z "$name" ] && [ -n "${TMUX:-}" ]; then
+      if [ -n "${TMUX_PANE:-}" ]; then
+        name=$(tmux display-message -p -t "$TMUX_PANE" '#S' 2>/dev/null)
+      else
+        name=$(tmux display-message -p '#S' 2>/dev/null)
+      fi
+    fi
+  fi
+  [ -z "$name" ] && name=$sname
+  for _p in $NAME_TRIM; do
+    case $name in "$_p"?*) name=${name#"$_p"}; break ;; esac
+  done
+  # A generated title can run long; the row belongs to the numbers. (eval keeps
+  # the bash-only substring away from a POSIX sh parser.)
+  if [ "$MB" = 1 ] && [ -n "$name" ]; then
+    mb_on; [ "${#name}" -gt 24 ] && eval 'name="${name:0:23}$G_ELL"'; mb_off
+  fi
+fi
+
+# Remote Control — can this session be picked up from claude.ai or the phone?
+# The payload doesn't say (its `remote` field means the reverse: this terminal
+# watching a session that runs elsewhere); the state file holds a
+# bridgeSessionId while it's on.
+rc=0
+if [ "$RC_ON" = 1 ]; then
   case $_SJ in *'"bridgeSessionId":"'*) rc=1 ;; esac
 fi
 
