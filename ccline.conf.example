@@ -4,6 +4,12 @@
 # Visual style: plain | bars | powerline
 CCLINE_STYLE=plain
 
+# Layout: one | two
+# two puts path, branch, session and model on the first row and the limits and
+# context on the second, and fits both rows to the terminal width by shedding
+# the least-read details first (gauges, token counts, reset clocks, pace).
+CCLINE_LAYOUT=one
+
 # Color depth: auto | truecolor | 256 | 16
 # auto detects the terminal (Terminal.app -> 256, iTerm/WT/VSCode -> truecolor).
 CCLINE_COLOR=auto
@@ -32,7 +38,7 @@ CCLINE_WORKTREE=auto
 CCLINE_WT_COLOR=auto
 
 # Burn-rate projection on the 5h / 7d limits: auto | 0
-# "5h 30% ⇈173%" = at this rate the window ends at 173%, i.e. you hit the wall
+# "5h 30% →173%" = at this rate the window ends at 173%, i.e. you hit the wall
 # before it resets. Computed locally from resets_at; silent while you're under
 # CCLINE_PACE_WARN, and for the first 15% of a window (too noisy to project).
 CCLINE_PACE=auto
@@ -41,6 +47,16 @@ CCLINE_PACE_WARN=90
 # Pull-request segment ("#42 ✓" / "#42 ✗"): auto | 0. Hidden when the branch
 # has no PR.
 CCLINE_PR=auto
+
+# Session name (from --name, /rename, or Claude Code's generated title): auto | 0
+# CCLINE_NAME_TRIM drops a launcher's prefix: "team- chat-" shows "team-auth"
+# as "auth". Space-separated; the first one that matches wins.
+CCLINE_NAME=auto
+CCLINE_NAME_TRIM=
+
+# "📱" while Remote Control is on (the session is reachable from claude.ai or the
+# Claude app): auto | 0
+CCLINE_RC=auto
 
 # Percentage thresholds that drive the green -> yellow -> orange -> red colour.
 CCLINE_WARN=50

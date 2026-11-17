@@ -16,6 +16,9 @@
 #   CCLINE_COLOR   auto | truecolor | 256 | 16    (default: auto)
 #   CCLINE_ASCII   auto | 1 | 0                   (default: auto)
 #   CCLINE_DIR     full | name                    (default: full — path or basename)
+#   CCLINE_LAYOUT  one | two                      (default: one — two moves the meters to row 2)
+#   CCLINE_NAME    auto | 0                       (session name; CCLINE_NAME_TRIM drops prefixes)
+#   CCLINE_RC      auto | 0                       (📱 while Remote Control is on)
 #   CCLINE_WARN/HIGH/CRIT   percentage thresholds (default: 50/75/90)
 #
 # Requires: jq
@@ -35,6 +38,12 @@ trim() {                                   # -> _R  (no fork)
 # One pass over the conf file; last assignment of a key wins.
 CF_STYLE=''; CF_COLOR=''; CF_ASCII=''; CF_WARN=''; CF_HIGH=''; CF_CRIT=''; CF_WT=''
 CF_PACE=''; CF_PACEWARN=''; CF_PR=''; CF_WTCOLOR=''; CF_DIR=''
+CF_LAYOUT=''; CF_NAME=''; CF_NAMETRIM=''; CF_RC=''
+# One machine can run several Claude Code config dirs (CLAUDE_CONFIG_DIR, one
+# per account); they share ~/.claude/ccline.conf unless they carry their own.
+if [ ! -f "$CONF" ] && [ -z "${CCLINE_CONFIG:-}" ] && [ -f "$HOME/.claude/ccline.conf" ]; then
+  CONF="$HOME/.claude/ccline.conf"
+fi
 if [ -f "$CONF" ]; then
   while IFS= read -r _l || [ -n "$_l" ]; do
     case $_l in ''|'#'*) continue ;; *=*) ;; *) continue ;; esac
@@ -54,6 +63,10 @@ if [ -f "$CONF" ]; then
       CCLINE_PACE)      CF_PACE=$_v ;;
       CCLINE_PACE_WARN) CF_PACEWARN=$_v ;;
       CCLINE_PR)        CF_PR=$_v ;;
+      CCLINE_LAYOUT)    CF_LAYOUT=$_v ;;
+      CCLINE_NAME)      CF_NAME=$_v ;;
+      CCLINE_NAME_TRIM) CF_NAMETRIM=$_v ;;
+      CCLINE_RC)        CF_RC=$_v ;;
     esac
   done < "$CONF"
 fi
@@ -74,6 +87,12 @@ off "$WORKTREE" && WT_ON=0 || WT_ON=1
 off "$PACE"     && PACE_ON=0 || PACE_ON=1
 off "$PR"       && PR_ON=0   || PR_ON=1
 off "$WT_COLOR" && WTC_ON=0  || WTC_ON=1
+LAYOUT="${CCLINE_LAYOUT:-${CF_LAYOUT:-one}}"
+NAME="${CCLINE_NAME:-${CF_NAME:-auto}}"
+NAME_TRIM="${CCLINE_NAME_TRIM:-${CF_NAMETRIM:-}}"
+RC="${CCLINE_RC:-${CF_RC:-auto}}"
+off "$NAME"     && NAME_ON=0 || NAME_ON=1
+off "$RC"       && RC_ON=0   || RC_ON=1
 
 # ---------------------------------------------------- capability detection --
 case "$FORCE_COLOR" in
@@ -109,7 +128,7 @@ if [ "$DEPTH" = truecolor ]; then
   C_ORANGE='38;2;230;140;40'; C_RED='38;2;235;77;75'
   B_DIR='48;2;38;78;84'; B_MODEL='48;2;58;50;82'; B_GREEN='48;2;40;72;40'
   B_YELLOW='48;2;82;74;26'; B_ORANGE='48;2;88;54;18'; B_RED='48;2;88;32;32'
-  B_STALE='48;2;58;58;58'; FG_BAR='38;2;235;235;235'
+  B_NAME='48;2;58;58;58'; FG_BAR='38;2;235;235;235'; C_NAME='1;38;2;235;235;235'
   WC0_F='1;38;2;120;200;120'; WC0_B='48;2;40;72;40'      # worktree tints
   WC1_F='1;38;2;185;150;235'; WC1_B='48;2;58;46;86'
   WC2_F='1;38;2;225;170;80';  WC2_B='48;2;86;62;22'
@@ -120,7 +139,8 @@ elif [ "$DEPTH" = 256 ]; then
   C_DIR='1;38;5;80'; C_DIM='38;5;244'; C_MODEL='38;5;141'; C_EFFORT='38;5;179'
   C_GREEN='38;5;114'; C_YELLOW='38;5;185'; C_ORANGE='38;5;208'; C_RED='38;5;203'
   B_DIR='48;5;23'; B_MODEL='48;5;60'; B_GREEN='48;5;22'; B_YELLOW='48;5;58'
-  B_ORANGE='48;5;94'; B_RED='48;5;52'; B_STALE='48;5;238'; FG_BAR='38;5;255'
+  B_ORANGE='48;5;94'; B_RED='48;5;52'; B_NAME='48;5;238'; FG_BAR='38;5;255'
+  C_NAME='1;38;5;255'
   WC0_F='1;38;5;114'; WC0_B='48;5;22'                    # worktree tints
   WC1_F='1;38;5;141'; WC1_B='48;5;60'
   WC2_F='1;38;5;179'; WC2_B='48;5;94'
@@ -131,7 +151,7 @@ else
   C_DIR='1;36'; C_DIM='90'; C_MODEL='35'; C_EFFORT='33'
   C_GREEN='32'; C_YELLOW='33'; C_ORANGE='33'; C_RED='31'
   B_DIR='44'; B_MODEL='45'; B_GREEN='42'; B_YELLOW='43'; B_ORANGE='43'; B_RED='41'
-  B_STALE='100'; FG_BAR='97'
+  B_NAME='100'; FG_BAR='97'; C_NAME='1;97'
   WC0_F='1;32'; WC0_B='42'                               # worktree tints
   WC1_F='1;35'; WC1_B='45'
   WC2_F='1;33'; WC2_B='43'
@@ -152,17 +172,59 @@ E_DIM="$ESC[${C_DIM}m"
 E_MODEL="$ESC[${C_MODEL}m"; E_EFFORT="$ESC[${C_EFFORT}m"
 E_GREEN="$ESC[${C_GREEN}m"; E_YELLOW="$ESC[${C_YELLOW}m"
 E_ORANGE="$ESC[${C_ORANGE}m"; E_RED="$ESC[${C_RED}m"
+E_NAME="$ESC[${C_NAME}m"
 
 # ------------------------------------------------------------------- glyphs --
 if [ "$ASCII" = 1 ]; then
-  G_SEP='|'; G_RST='~'; G_BOLT='*'; G_DOT='*'; G_WT='wt:'; G_DASH='-'
+  G_SEP='|'; G_RST='~'; G_BOLT='*'; G_DOT='*'; G_WT='wt:'
   G_BARF='#'; G_BARE='-'; G_BL='['; G_BR=']'; PL_ARR=''
-  G_PACE='^'; G_OK='+'; G_NOK='x'
+  G_PACE='>'; G_OK='+'; G_NOK='x'; G_RC='(rc)'; G_RCW=0; G_ELL='~'
 else
-  G_SEP='·'; G_RST='↺'; G_BOLT='⚡'; G_DOT='●'; G_WT='⑂'; G_DASH='—'
+  G_SEP='·'; G_RST='↺'; G_BOLT='⚡'; G_DOT='●'; G_WT='⑂'
   G_BARF='█'; G_BARE='░'; G_BL='▕'; G_BR='▏'; PL_ARR=$(printf '\356\202\260')
-  G_PACE='⇈'; G_OK='✓'; G_NOK='✗'
+  G_PACE='→'; G_OK='✓'; G_NOK='✗'; G_RC='📱'; G_RCW=1; G_ELL='…'
 fi
+# G_RCW: columns G_RC takes beyond its character count (an emoji is two wide).
+
+# -------------------------------------------------------------------- width --
+# Claude Code puts the terminal width in COLUMNS before running us, so a row
+# that would wrap can shed its least useful parts instead. That takes a count
+# of characters, not bytes: bash gives one under a UTF-8 locale — and a session
+# started over ssh or inside tmux often has no locale at all. So borrow
+# C.UTF-8 just for the count and hand the caller's locale back (date's weekday
+# names come from it). Not bash, or no UTF-8 locale to borrow: MB=0, and rows
+# are neither trimmed nor aligned — everything else renders as before.
+mb_on()  { _lcs=${LC_ALL+1}; _lco=${LC_ALL:-}; { LC_ALL=C.UTF-8; } 2>/dev/null; }
+mb_off() { if [ -n "$_lcs" ]; then LC_ALL=$_lco; else unset LC_ALL; fi; }
+MB=0
+if [ -n "${BASH_VERSION:-}" ]; then
+  _probe='·'; mb_on; [ "${#_probe}" = 1 ] && MB=1; mb_off
+fi
+strip() {                                  # drop SGR escapes -> _S
+  _in=$1; _S=''
+  while :; do
+    case $_in in
+      *"$ESC["*) _S="$_S${_in%%"$ESC["*}"; _in=${_in#*"$ESC["}; _in=${_in#*m} ;;
+      *) _S="$_S$_in"; return ;;
+    esac
+  done
+}
+vwidth() {                                 # visible columns -> _VW (MB=1 only)
+  strip "$1"
+  mb_on; _VW=${#_S}; mb_off
+  case $_S in *"$G_RC"*) _VW=$(( _VW + G_RCW )) ;; esac
+}
+# Leave a few columns: Claude Code indents the status line, and a row that
+# lands exactly on the edge wraps in some terminals.
+AVAIL=0                                    # 0 = width unknown: never trim
+if [ "$MB" = 1 ]; then
+  case ${COLUMNS:-} in ''|*[!0-9]*) ;; *) AVAIL=$(( COLUMNS - 4 )) ;; esac
+fi
+fits() { [ "$AVAIL" -le 0 ] || [ "$1" -le "$AVAIL" ]; }
+pad() {                                    # n -> _PAD (n spaces)
+  _PAD=''; _i=0
+  while [ "$_i" -lt "$1" ]; do _PAD="$_PAD "; _i=$((_i+1)); done
+}
 
 # --------------------------------------------------------------------- now --
 # bash 5 / zsh expose EPOCHSECONDS for free; older shells pay one fork.
@@ -189,7 +251,7 @@ epoch_fmt "$NOW" %a; NOW_WDAY=$_EF
 _oldifs=$IFS
 IFS=$(printf '\037')
 read -r cwd model effort five_hr five_reset seven_day seven_reset ctx ctx_tok ctx_max wt has_ws \
-        pr_num pr_state <<EOF
+        pr_num pr_state sid sname <<EOF
 $(printf '%s' "$input" | jq -r '[
   (.cwd // ""),
   (.model.display_name // ""),
@@ -204,7 +266,9 @@ $(printf '%s' "$input" | jq -r '[
   (.workspace.git_worktree // ""),
   (if .workspace then "1" else "0" end),
   (.pr.number // ""),
-  (.pr.review_state // "" | ascii_downcase)
+  (.pr.review_state // "" | ascii_downcase),
+  (.session_id // ""),
+  (.session_name // "" | gsub("[[:cntrl:]]"; ""))
 ] | map(tostring) | join("\u001f")' 2>/dev/null)
 EOF
 IFS=$_oldifs
@@ -240,10 +304,51 @@ intval() { _IV=${1%%.*}; case $_IV in ''|*[!0-9]*) _IV=0 ;; esac; }
 [ -n "$seven_day" ] && { intval "$seven_day"; seven_day=$_IV; }
 intval "$ctx"; ctx=$_IV
 
+# ------------------------------------------------------------------ session --
+# Which conversation is this? With several open — tabs, tmux panes, chats
+# reached over ssh — path and model read alike in all of them; the name
+# doesn't. It comes from --name, /rename, or Claude Code's generated title.
+# CCLINE_NAME_TRIM drops a launcher's prefix ("makira-ibrahim" -> "ibrahim").
+name=''
+if [ "$NAME_ON" = 1 ] && [ -n "$sname" ]; then
+  name=$sname
+  for _p in $NAME_TRIM; do
+    case $name in "$_p"?*) name=${name#"$_p"}; break ;; esac
+  done
+  # A generated title can run long; the row belongs to the numbers. (eval keeps
+  # the bash-only substring away from a POSIX sh parser.)
+  if [ "$MB" = 1 ]; then
+    mb_on; [ "${#name}" -gt 24 ] && eval 'name="${name:0:23}$G_ELL"'; mb_off
+  fi
+fi
+
+# Remote Control — can this session be reached from claude.ai or the phone?
+# The payload doesn't say: its `remote` field means the reverse (this terminal
+# watching a session that runs elsewhere). Claude Code's own per-process state
+# file does: $CLAUDE_DIR/sessions/<pid>.json carries a bridgeSessionId while
+# Remote Control is on. We are that process's child — directly, or through one
+# shell — and the file must name this payload's session, so a recycled pid
+# can't light the mark. Checked on every run, so toggling it mid-session shows
+# up within one refreshInterval.
+rc=0
+rc_file() {                                # pid -> 0 if its state file is ours (-> _SJ)
+  _SJ=''
+  [ -f "$CLAUDE_DIR/sessions/$1.json" ] || return 1
+  IFS= read -r _SJ < "$CLAUDE_DIR/sessions/$1.json"
+  case $_SJ in *"\"sessionId\":\"$sid\""*) return 0 ;; esac
+  _SJ=''; return 1
+}
+if [ "$RC_ON" = 1 ] && [ -n "$sid" ]; then
+  if ! rc_file "$PPID"; then
+    _pp=$(ps -o ppid= -p "$PPID" 2>/dev/null); trim "$_pp"
+    case $_R in ''|*[!0-9]*) ;; *) rc_file "$_R" ;; esac
+  fi
+  case $_SJ in *'"bridgeSessionId":"'*) rc=1 ;; esac
+fi
+
 # A rate-limit window whose resets_at has passed is a *known-stale* reading:
-# rate_limits only refresh when an API response arrives, so after the window
-# rolls over the old percentage is simply wrong until the next message. Show a
-# dash rather than a number we know to be false.
+# rate_limits only refresh when an API response arrives, so once the window
+# rolls over the old percentage is simply wrong until the next message.
 expired() {                                # -> _EX (1 = window already reset)
   _EX=0
   [ -z "$1" ] && return
@@ -251,32 +356,16 @@ expired() {                                # -> _EX (1 = window already reset)
   case $_ep in ''|*[!0-9]*) return ;; esac
   [ "$_ep" -le "$NOW" ] && _EX=1
 }
-expired "$five_reset";  five_stale=$_EX
-expired "$seven_reset"; seven_stale=$_EX
 
-# The same dash covers the *other* way a limit can be unknown: rate_limits are
-# absent from the payload for the first render or two of a session — including a
-# --resume, where they show up a beat later without you typing anything. Holding
-# the slot open (5h —) stops the line reshuffling underneath you.
-#
-# But rate_limits never arrive at all on API-key accounts, and a dash that never
-# resolves is its own lie. The question "does this account have limits?" can't be
-# answered from one payload — a resumed session already carries its token counts
-# while the limits are still missing, so those are not the signal. What does
-# answer it: have we *ever* seen limits here? Learn that once, remember it.
-SEEN="$CLAUDE_DIR/.ccline-limits-seen"
-if [ -n "$five_hr" ] || [ -n "$seven_day" ]; then
-  limits_known=1
-  [ -f "$SEEN" ] || : > "$SEEN" 2>/dev/null   # first sighting: remember for next time
-elif [ -f "$SEEN" ]; then
-  limits_known=1                              # they exist, they're just not here yet
-else
-  limits_known=0                              # never seen any: API key, most likely
-fi
-
-five_show=$limits_known; seven_show=$limits_known
-[ -z "$five_hr" ]   && { five_hr=0;   five_stale=1; }
-[ -z "$seven_day" ] && { seven_day=0; seven_stale=1; }
+# A window is shown only while Claude Code reports it. Absent — before the first
+# response, or on a plan that doesn't meter that window at all — it takes no
+# room: a slot held open with a dash reads as "coming", and for some accounts
+# it never comes. Expired counts as absent too (current Claude Code drops an
+# expired window from the payload itself; older versions kept the stale figure).
+expired "$five_reset"
+if [ -n "$five_hr" ] && [ "$_EX" = 0 ]; then five_show=1; else five_show=0; fi
+expired "$seven_reset"
+if [ -n "$seven_day" ] && [ "$_EX" = 0 ]; then seven_show=1; else seven_show=0; fi
 
 # Pace: "at this burn rate, where does the window end up?" The window length is
 # fixed (5h / 7d) and resets_at is its end, so elapsed — and therefore the
@@ -294,7 +383,7 @@ pace() {                                   # used% reset window -> _P ('' = quie
   _ep=${2%.*}
   case $_ep in ''|*[!0-9]*) return ;; esac
   _rem=$(( _ep - NOW ))
-  [ "$_rem" -le 0 ] && return              # already reset — the stale path owns this
+  [ "$_rem" -le 0 ] && return              # already reset — the window is hidden then
   _el=$(( $3 - _rem ))                     # seconds elapsed in the window
   [ "$_el" -le 0 ] && return               # clock skew / longer window than we assume
   [ $(( _el * 100 / $3 )) -lt 15 ] && return
@@ -399,9 +488,10 @@ wt_glyph=$G_WT
 [ -z "$wt_label" ] && wt_glyph=${G_WT%:}
 
 # ------------------------------------------------------------------ helpers --
-fmt_k() {                                  # 47210 -> _K=47k, 1000000 -> _K=1.0M
+fmt_k() {                                  # 47210 -> _K=47k, 1000000 -> _K=1M, 1500000 -> _K=1.5M
   if [ "$1" -ge 1000000 ]; then
-    _K="$(( $1 / 1000000 )).$(( ($1 % 1000000) / 100000 ))M"
+    _d=$(( ($1 % 1000000) / 100000 ))
+    if [ "$_d" = 0 ]; then _K="$(( $1 / 1000000 ))M"; else _K="$(( $1 / 1000000 )).${_d}M"; fi
   else
     _K="$(( ($1 + 500) / 1000 ))k"
   fi
@@ -411,7 +501,7 @@ fmt_reset() {                              # epoch -> _RS=18:42 / "Sal 09:00" ('
   [ -z "$1" ] && return
   _ep=${1%.*}
   case $_ep in ''|*[!0-9]*) return ;; esac
-  [ "$_ep" -le "$NOW" ] && return          # already reset — the stale path owns this
+  [ "$_ep" -le "$NOW" ] && return          # already reset — the window is hidden then
   epoch_fmt "$_ep" %H:%M; _hm=$_EF
   # Same calendar day -> bare clock; another day (7d window, or a 5h that crosses
   # midnight) -> prefix the locale's short weekday so the time isn't ambiguous.
@@ -445,10 +535,33 @@ bar() {                                    # bar PCT WIDTH -> _BAR
 }
 
 # ---------------------------------------------------------------- renderers --
+# Everything that forks (date, for the reset clocks) is worked out once, here.
+# The segment builders below only assemble strings, so the two-row layout can
+# rebuild a row as many times as fitting it takes, for free.
+five_p=''; five_rs=''; seven_p=''; seven_rs=''
+if [ "$five_show" = 1 ]; then
+  pace "$five_hr" "$five_reset" "$W_5H"; five_p=$_P
+  fmt_reset "$five_reset"; five_rs=$_RS
+fi
+if [ "$seven_show" = 1 ]; then
+  pace "$seven_day" "$seven_reset" "$W_7D"; seven_p=$_P
+  fmt_reset "$seven_reset"; seven_rs=$_RS
+fi
+ctx_tt=''                                  # "98k/1M"
+if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_tok" -gt 0 ] 2>/dev/null && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
+  fmt_k "$ctx_tok"; _t=$_K; fmt_k "$ctx_max"; ctx_tt="$_t/$_K"
+fi
+
 # plain / bars share a " · " separator join; powerline uses bg segments.
 SEP="$E_DIM $G_SEP $R"
 L=""
 add() { if [ -z "$L" ]; then L=$1; else L="$L$SEP$1"; fi; }
+
+[ "$STYLE" = powerline ] && [ "$ASCII" = 1 ] && STYLE=bars   # no arrow glyph in ASCII
+# What the meters carry. The two-row layout switches these off one at a time
+# when its second row would otherwise wrap; the percentages always stay.
+SHOW_BAR=0; [ "$STYLE" = bars ] && SHOW_BAR=1
+SHOW_TOK=1; SHOW_RST=1; SHOW_PACE=1
 
 pr_mark() {                                # -> _PM glyph, _PME its color ('' = no PR)
   _PM=''; _PME=$E_DIM
@@ -475,60 +588,110 @@ seg_dir() {                                # -> _SEG
     [ -n "$_PM" ] && _SEG="$_SEG$_PME$_PM$R"
   fi
 }
-seg_model() {                              # -> _SEG
+seg_who() {                                # session name + Remote Control -> _SEG ('' = none)
+  _SEG=''
+  [ -n "$name" ] && _SEG="$E_NAME$name$R"
+  if [ "$rc" = 1 ]; then
+    [ -n "$_SEG" ] && _SEG="$_SEG "
+    _SEG="$_SEG$G_RC"
+  fi
+}
+seg_model() {                              # one row: "Opus 4.8 ⚡high" -> _SEG
   _SEG=''
   [ -z "$model" ] && return
   _SEG="$E_MODEL$model$R"
   [ -n "$effort" ] && _SEG="$_SEG $E_EFFORT$G_BOLT$effort$R"
 }
-seg_limit() {                              # label pct reset stale window -> _SEG
-  if [ "$4" = 1 ]; then _SEG="$E_DIM$1 $G_DASH$R"; return; fi
-  pct_e "$2"
-  _SEG="$E_DIM$1 $_E$2%$R"
-  pace "$2" "$3" "$5"
-  [ -n "$_P" ] && { pace_e "$_P"; _SEG="$_SEG $_PE$G_PACE$_P%$R"; }
-  fmt_reset "$3"; [ -n "$_RS" ] && _SEG="$_SEG $E_DIM$G_RST$_RS$R"
+seg_model2() {                             # two rows: "Opus 4.8 · high"; $1=0 drops effort
+  _SEG=''
+  [ -z "$model" ] && return
+  _SEG="$E_MODEL$model$R"
+  [ "$1" = 1 ] && [ -n "$effort" ] && _SEG="$_SEG$SEP$E_EFFORT$effort$R"
+  return 0
 }
-seg_limit_bar() {                          # label pct reset stale window -> _SEG
-  if [ "$4" = 1 ]; then _SEG="$E_DIM$1 $G_DASH$R"; return; fi
-  pct_e "$2"; bar "$2" 6
-  _SEG="$E_DIM$1 $G_BL$_E$_BAR$E_DIM$G_BR $_E$2%$R"
-  pace "$2" "$3" "$5"
-  [ -n "$_P" ] && { pace_e "$_P"; _SEG="$_SEG $_PE$G_PACE$_P%$R"; }
-  fmt_reset "$3"; [ -n "$_RS" ] && _SEG="$_SEG $E_DIM$G_RST$_RS$R"
+seg_limit() {                              # label pct pace reset -> _SEG
+  pct_e "$2"
+  if [ "$SHOW_BAR" = 1 ]; then
+    bar "$2" 6; _SEG="$E_DIM$1 $G_BL$_E$_BAR$E_DIM$G_BR $_E$2%$R"
+  else
+    _SEG="$E_DIM$1 $_E$2%$R"
+  fi
+  if [ "$SHOW_PACE" = 1 ] && [ -n "$3" ]; then pace_e "$3"; _SEG="$_SEG $_PE$G_PACE$3%$R"; fi
+  if [ "$SHOW_RST" = 1 ] && [ -n "$4" ]; then _SEG="$_SEG $E_DIM$G_RST$4$R"; fi
 }
 seg_ctx() {                                # -> _SEG
   pct_e "$ctx"
-  _SEG="${E_DIM}ctx $_E$ctx%$R"
-  if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_tok" -gt 0 ] 2>/dev/null && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
-    fmt_k "$ctx_tok"; _t=$_K; fmt_k "$ctx_max"
-    _SEG="$_SEG $E_DIM$_t/$_K$R"
+  if [ "$SHOW_BAR" = 1 ]; then
+    bar "$ctx" 6; _SEG="${E_DIM}ctx $G_BL$_E$_BAR$E_DIM$G_BR $_E$ctx%$R"
+  else
+    _SEG="${E_DIM}ctx $_E$ctx%$R"
   fi
-}
-seg_ctx_bar() {                            # -> _SEG
-  pct_e "$ctx"; bar "$ctx" 6
-  _SEG="${E_DIM}ctx $G_BL$_E$_BAR$E_DIM$G_BR $_E$ctx%$R"
-  if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_tok" -gt 0 ] 2>/dev/null && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
-    fmt_k "$ctx_tok"; _t=$_K; fmt_k "$ctx_max"
-    _SEG="$_SEG $E_DIM$_t/$_K$R"
-  fi
+  if [ "$SHOW_TOK" = 1 ] && [ -n "$ctx_tt" ]; then _SEG="$_SEG $E_DIM$ctx_tt$R"; fi
 }
 
-render_plain() {
+render_one() {
   seg_dir; add "$_SEG"
+  seg_who; [ -n "$_SEG" ] && add "$_SEG"
   seg_model; [ -n "$_SEG" ] && add "$_SEG"
-  [ "$five_show" = 1 ] && { seg_limit 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"; add "$_SEG"; }
-  [ "$seven_show" = 1 ] && { seg_limit 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"; add "$_SEG"; }
+  [ "$five_show" = 1 ] && { seg_limit 5h "$five_hr" "$five_p" "$five_rs"; add "$_SEG"; }
+  [ "$seven_show" = 1 ] && { seg_limit 7d "$seven_day" "$seven_p" "$seven_rs"; add "$_SEG"; }
   seg_ctx; add "$_SEG"
   printf '%s' "$L"
 }
-render_bars() {
-  seg_dir; add "$_SEG"
-  seg_model; [ -n "$_SEG" ] && add "$_SEG"
-  [ "$five_show" = 1 ] && { seg_limit_bar 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"; add "$_SEG"; }
-  [ "$seven_show" = 1 ] && { seg_limit_bar 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"; add "$_SEG"; }
-  seg_ctx_bar; add "$_SEG"
-  printf '%s' "$L"
+
+# Two rows: where you are and who you're talking to on top, the meters below.
+#   ~/dev/proj · main ●  ibrahim 📱              Opus 4.8 · high
+#   7d ▕█████░▏ 89% →119% ↺Thu 18:00 · ctx ▕█░░░░░▏ 10% 98k/1M
+meters() {                                 # -> _LM (row 2)
+  _LM=''
+  if [ "$five_show" = 1 ]; then seg_limit 5h "$five_hr" "$five_p" "$five_rs"; _LM=$_SEG; fi
+  if [ "$seven_show" = 1 ]; then seg_limit 7d "$seven_day" "$seven_p" "$seven_rs"; _LM="${_LM:+$_LM$SEP}$_SEG"; fi
+  seg_ctx; _LM="${_LM:+$_LM$SEP}$_SEG"
+}
+where() {                                  # -> _LW (row 1, left side)
+  seg_dir; _LW=$_SEG
+  seg_who; [ -n "$_SEG" ] && _LW="$_LW  $_SEG"
+}
+render_two() {
+  meters
+  _w2=0
+  if [ "$MB" = 1 ]; then
+    # Too wide: shed the gauges, then the token counts, then the reset clocks,
+    # then the pace marker — least read first.
+    vwidth "$_LM"
+    for _drop in BAR TOK RST PACE; do
+      fits "$_VW" && break
+      eval "SHOW_$_drop=0"; meters; vwidth "$_LM"
+    done
+    _w2=$_VW
+  fi
+  _l2=$_LM
+
+  where
+  if [ "$MB" = 1 ]; then
+    vwidth "$_LW"
+    if ! fits "$_VW" && [ "$DIRMODE" != name ]; then   # a deep path gives way first
+      dir=${cwd##*/}; [ -z "$dir" ] && dir='~'
+      where; vwidth "$_LW"
+    fi
+    _wl=$_VW
+  fi
+  _l1=$_LW
+  seg_model2 1
+  if [ -n "$_SEG" ]; then
+    if [ "$MB" = 1 ]; then
+      vwidth "$_SEG"
+      if ! fits $(( _wl + 2 + _VW )); then seg_model2 0; vwidth "$_SEG"; fi
+      if fits $(( _wl + 2 + _VW )); then
+        # end the model under row 2's last column, so the rows read as one block
+        _gap=$(( _w2 - _wl - _VW )); [ "$_gap" -lt 2 ] && _gap=2
+        pad "$_gap"; _l1="$_LW$_PAD$_SEG"
+      fi
+    else
+      _l1="$_LW$SEP$_SEG"
+    fi
+  fi
+  printf '%s\n%s' "$_l1" "$_l2"
 }
 
 # powerline: chained bg segments with  transitions
@@ -550,16 +713,16 @@ pl_add() {                                 # fg bg text
   fi
   af_of "$_bg"; PREV_AF=$_AF
 }
-pl_limit() {                               # label pct reset stale window
-  if [ "$4" = 1 ]; then pl_add "$FG_BAR" "$B_STALE" "$1 $G_DASH"; return; fi
+pl_end() { PL="$PL$R$ESC[${PREV_AF}m$PL_ARR$R"; }
+pl_limit() {                               # label pct pace reset
   _t="$1 $2%"
-  pace "$2" "$3" "$5"; [ -n "$_P" ] && _t="$_t $G_PACE$_P%"
-  fmt_reset "$3"; [ -n "$_RS" ] && _t="$_t $G_RST$_RS"
+  [ -n "$3" ] && _t="$_t $G_PACE$3%"
+  [ -n "$4" ] && _t="$_t $G_RST$4"
   # a window projected past its cap outranks the used-% colour — that's the point
-  if [ -n "$_P" ] && [ "$_P" -ge 100 ]; then _BG=$B_RED; else pct_bg "$2"; fi
+  if [ -n "$3" ] && [ "$3" -ge 100 ]; then _BG=$B_RED; else pct_bg "$2"; fi
   pl_add "$FG_BAR" "$_BG" "$_t"
 }
-render_powerline() {
+pl_where() {
   _t="$dir"
   [ -n "$git_branch" ] && { _t="$dir $G_SEP $git_branch"; [ "$git_dirty" = 1 ] && _t="$_t $G_DOT"; }
   [ -n "$git_worktree" ] && _t="$_t $wt_glyph$wt_label"
@@ -567,23 +730,32 @@ render_powerline() {
     pr_mark; _t="$_t #$pr_num"; [ -n "$_PM" ] && _t="$_t$_PM"
   fi
   pl_add "$FG_BAR" "$B_DIR" "$_t"
+  _t=$name
+  [ "$rc" = 1 ] && _t="${_t:+$_t }$G_RC"
+  [ -n "$_t" ] && pl_add "$FG_BAR" "$B_NAME" "$_t"
   if [ -n "$model" ]; then
     _t="$model"; [ -n "$effort" ] && _t="$model $G_BOLT$effort"
     pl_add "$FG_BAR" "$B_MODEL" "$_t"
   fi
-  [ "$five_show" = 1 ] && pl_limit 5h "$five_hr" "$five_reset" "$five_stale" "$W_5H"
-  [ "$seven_show" = 1 ] && pl_limit 7d "$seven_day" "$seven_reset" "$seven_stale" "$W_7D"
-  _t="ctx $ctx%"
-  if [ -n "$ctx_tok" ] && [ -n "$ctx_max" ] && [ "$ctx_tok" -gt 0 ] 2>/dev/null && [ "$ctx_max" -gt 0 ] 2>/dev/null; then
-    fmt_k "$ctx_tok"; _c=$_K; fmt_k "$ctx_max"; _t="$_t $_c/$_K"
-  fi
+}
+pl_meters() {
+  [ "$five_show" = 1 ] && pl_limit 5h "$five_hr" "$five_p" "$five_rs"
+  [ "$seven_show" = 1 ] && pl_limit 7d "$seven_day" "$seven_p" "$seven_rs"
+  _t="ctx $ctx%"; [ -n "$ctx_tt" ] && _t="$_t $ctx_tt"
   pct_bg "$ctx"; pl_add "$FG_BAR" "$_BG" "$_t"
-  PL="$PL$R$ESC[${PREV_AF}m$PL_ARR$R"
-  printf '%s' "$PL"
+}
+render_powerline() {
+  pl_where
+  if [ "$LAYOUT" = two ]; then
+    pl_end; _l1=$PL; PL=''; PREV_AF=''
+    pl_meters; pl_end
+    printf '%s\n%s' "$_l1" "$PL"
+  else
+    pl_meters; pl_end
+    printf '%s' "$PL"
+  fi
 }
 
-case "$STYLE" in
-  bars)      render_bars ;;
-  powerline) if [ "$ASCII" = 1 ]; then render_bars; else render_powerline; fi ;;
-  *)         render_plain ;;
-esac
+if [ "$STYLE" = powerline ]; then render_powerline
+elif [ "$LAYOUT" = two ]; then render_two
+else render_one; fi
